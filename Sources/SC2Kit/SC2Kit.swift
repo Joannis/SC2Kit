@@ -4,7 +4,74 @@ import Foundation
 import NIO
 import WebSocketKit
 
-final class SC2Game {
+public final class SC2Game {
+    private var players = [(client: SC2Client, setup: SC2Player)]()
+    public private(set) var bots = [SC2Bot]()
+    let group: MultiThreadedEventLoopGroup
+    let loop: EventLoop
+    
+    public init() {
+        group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        loop = group.next()
+    }
+    
+    public func quit() -> EventLoopFuture<Void> {
+        var request = SC2APIProtocol_Request()
+        request.quit = .init()
+        
+        let done = players.map { player in
+            player.client.send(&request, outputKeyPath: \.quit).map { _ in }
+        }
+        
+        return EventLoopFuture.andAllSucceed(done, on: loop)
+    }
+    
+    public func startGame(
+        onMap map: SC2Map,
+        realtime: Bool,
+        players: [SC2Player]
+    ) -> EventLoopFuture<Void> {
+        if players.isEmpty {
+            fatalError("Cannot create an empty game")
+        }
+        
+        let basePort = Int.random(in: 5000..<6000)
+        var done = [EventLoopFuture<Void>]()
+        
+        for i in 0..<players.count {
+            if case .participant = players[i] {
+                done.append(
+                    SC2Client.launch(group: group, port: basePort + i).map { client in
+                        self.players.append((client, players[i]))
+                    }
+                )
+            }
+        }
+        
+        return EventLoopFuture.andAllSucceed(done, on: loop).flatMap {
+            return self.players[0].client.createGame(onMap: map, realtime: realtime, players: players)
+        }.flatMap {
+            func joinPlayer(_ i: Int) -> EventLoopFuture<Void> {
+                if i >= self.players.count {
+                    return self.loop.makeSucceededFuture(())
+                }
+                
+                let player = self.players[i]
+                
+                return player.client.joinPlayer(player.setup).flatMap { config in
+                    if case .participant(_, .bot(let botType)) = player.setup {
+                        let bot = SC2Bot(configuration: config, bot: botType.init(), client: player.client)
+                        self.bots.append(bot)
+                    }
+                    
+                    return joinPlayer(i + 1)
+                }
+            }
+            
+            return joinPlayer(0)
+        }
+    }
+    
     static func launch(port: Int) {
         let sc2 = Process()
         sc2.launchPath = "/Applications/StarCraft II/Versions/Base78285/SC2.app/Contents/MacOS/SC2"
@@ -22,19 +89,66 @@ final class SC2Game {
     }
 }
 
+public final class SC2Bot {
+    public let configuration: PlayerConfiguration
+    private var stepping = false
+    fileprivate let bot: BotPlayer
+    private let client: SC2Client
+    
+    fileprivate init(configuration: PlayerConfiguration, bot: BotPlayer, client: SC2Client) {
+        self.configuration = configuration
+        self.bot = bot
+        self.client = client
+    }
+    
+    internal func observe() -> EventLoopFuture<Observation> {
+        assert(client.status == .inGame)
+        var request = SC2APIProtocol_Request()
+        request.observation = .init()
+        
+        return client.send(&request, outputKeyPath: \.observation).map(Observation.init)
+    }
+    
+    public func tick() -> EventLoopFuture<Void> {
+        return observe().map(bot.onStep).map { _ in }
+    }
+    
+    public func startStepping() -> EventLoopFuture<Void> {
+        assert(client.status == .inGame)
+        
+        guard !stepping else {
+            fatalError("Cannot start stepping a bot more than once")
+        }
+        
+        stepping = true
+        
+        func nextTick() -> EventLoopFuture<Void> {
+            self.tick().flatMap {
+                nextTick()
+            }
+        }
+        
+        return nextTick()
+    }
+}
+
+struct Closed: Error {}
+
 public final class SC2Client {
     private let websocket: WebSocket
     private var promise: EventLoopPromise<ByteBuffer>?
+    public let port: Int
+    internal private(set) var status: SC2APIProtocol_Status = .launched
     
-    private init(websocket: WebSocket) {
+    private init(websocket: WebSocket, port: Int) {
         self.websocket = websocket
+        self.port = port
         
         websocket.onBinary { [unowned self] _, data in
             self.receiveData(data)
         }
         
         websocket.onClose.whenSuccess { [unowned self] in
-            struct Closed: Error {}
             self.promise?.fail(Closed())
         }
     }
@@ -43,19 +157,18 @@ public final class SC2Client {
         promise?.succeed(data)
     }
     
-    public static func connect(group: EventLoopGroup, port: Int) -> EventLoopFuture<SC2Client> {
+    static func connect(group: EventLoopGroup, port: Int) -> EventLoopFuture<SC2Client> {
         let promise = group.next().makePromise(of: SC2Client.self)
         
-        WebSocket.connect(to: "ws://127.0.0.1:\(port)/sc2api", on: group) { websocket in
-            promise.succeed(SC2Client(websocket: websocket))
+        let configuration = WebSocketClient.Configuration(maxFrameSize: 16_000_000)
+        WebSocket.connect(to: "ws://127.0.0.1:\(port)/sc2api", configuration: configuration, on: group) { websocket in
+            promise.succeed(SC2Client(websocket: websocket, port: port))
         }.cascadeFailure(to: promise)
         
         return promise.futureResult
     }
     
-    public static func launch() -> EventLoopFuture<SC2Client> {
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        let port = 5679
+    static func launch(group: EventLoopGroup, port: Int, timeout: Int = 30) -> EventLoopFuture<SC2Client> {
         SC2Game.launch(port: port)
         
         func retry(_ n: Int) -> EventLoopFuture<SC2Client> {
@@ -69,10 +182,14 @@ public final class SC2Client {
             }
         }
         
-        return retry(10)
+        return retry(timeout)
     }
     
-    internal func send<Input: SwiftProtobuf.Message, Output: SwiftProtobuf.Message>(_ input: Input, outputKeyPath: KeyPath<SC2APIProtocol_Response, Output>) -> EventLoopFuture<Output> {
+    internal func send<Output: SwiftProtobuf.Message>(_ input: inout SC2APIProtocol_Request, outputKeyPath: KeyPath<SC2APIProtocol_Response, Output>) -> EventLoopFuture<Output> {
+        if websocket.isClosed {
+            return self.websocket.eventLoop.makeFailedFuture(Closed())
+        }
+        
         // TODO: Support pipelining
         assert(promise == nil)
         
@@ -89,11 +206,25 @@ public final class SC2Client {
             self.promise = nil
             let data = buffer.getData(at: 0, length: buffer.readableBytes)!
             let response = try SC2APIProtocol_Response(serializedData: data)
+            
+            if !response.error.isEmpty {
+                print(response.error)
+                throw SC2Errors(errors: response.error)
+            }
+            
+            print(response.status, response.id)
+            self.status = response.status
+            
             return response[keyPath: outputKeyPath]
         }
     }
     
-    public func startGame(onMap map: SC2Map, realtime: Bool, players: [SC2Player]) -> EventLoopFuture<Void> {
+    func createGame(
+        onMap map: SC2Map,
+        realtime: Bool,
+        players: [SC2Player]
+    ) -> EventLoopFuture<Void> {
+        assert(status == .launched)
         var create = SC2APIProtocol_RequestCreateGame()
         
         switch map {
@@ -114,158 +245,105 @@ public final class SC2Client {
         var request = SC2APIProtocol_Request()
         request.createGame = create
         
-        return send(request, outputKeyPath: \.createGame).flatMap { response in
+        return send(&request, outputKeyPath: \.createGame).flatMapThrowing { response in
             if response.hasError {
                 print(response.errorDetails)
-                return self.websocket.eventLoop.makeFailedFuture(response.error)
+                throw response.error
             }
-
-            func joinPlayer(_ i: Int) -> EventLoopFuture<Void> {
-                if i >= players.count {
-                    return self.websocket.eventLoop.makeSucceededFuture(())
-                }
-
-                var join = SC2APIProtocol_RequestJoinGame()
-
-                join.options.raw = true
-                join.options.score = true
-                join.options.showCloaked = true
-                join.options.showBurrowedShadows = true
-                join.participation = players[i].participation
-
-                var request = SC2APIProtocol_Request()
-                request.joinGame = join
-
-                return self.send(request, outputKeyPath: \.joinGame).flatMap { response in
-                    if response.hasError {
-                        print(response.errorDetails)
-                        return self.websocket.eventLoop.makeFailedFuture(response.error)
-                    }
-
-                    return joinPlayer(i + 1)
-                }
+        }
+    }
+    
+    func joinPlayer(_ player: SC2Player) -> EventLoopFuture<PlayerConfiguration> {
+        assert(status == .initGame || status == .launched)
+        var join = SC2APIProtocol_RequestJoinGame()
+        
+        join.options.raw = true
+        join.options.score = true
+        join.options.showCloaked = true
+        join.options.showBurrowedShadows = true
+        join.participation = player.participation
+        
+        var request = SC2APIProtocol_Request()
+        request.joinGame = join
+        
+        return self.send(&request, outputKeyPath: \.joinGame).flatMapThrowing { response in
+            if response.hasError {
+                print(response.errorDetails)
+                throw response.error
             }
-
-            return joinPlayer(0)
+            
+            return PlayerConfiguration(playerId: Int(response.playerID))
         }
     }
 }
 
 extension SC2APIProtocol_ResponseCreateGame.Error: Error {}
 extension SC2APIProtocol_ResponseJoinGame.Error: Error {}
-
-public enum SC2Map {
-    case battlenet(String)
-    case localPath(String)
+struct SC2Errors: Error {
+    let errors: [String]
 }
 
-public enum Player {
-    case human
-    case bot(BotPlayer)
-}
-
-public protocol BotPlayer: class {
+public protocol BotPlayer {
+    var configuration: PlayerConfiguration! { get set }
+    init()
     
+    func onStep(observing observation: Observation) -> [Action]
 }
 
-public enum SC2Player {
-    case standardAI(SC2AIPlayer)
-    case observer
-    case participant(Race, Player)
+public struct PlayerConfiguration {
+    public let playerId: Int
+}
+
+public struct Observation {
+    let observation: SC2APIProtocol_Observation
     
-    var participation: SC2APIProtocol_RequestJoinGame.OneOf_Participation {
-        switch self {
-        case .standardAI(let sc2ai):
-            return .race(sc2ai.race.sc2)
-        case .participant(let race):
-            return .race(race.sc2)
-        case .observer:
-            return .observedPlayerID(0)
-        }
+    init(response: SC2APIProtocol_ResponseObservation) {
+        self.observation = response.observation
     }
     
-    var sc2: SC2APIProtocol_PlayerSetup {
-        var setup = SC2APIProtocol_PlayerSetup()
-        
-        switch self {
-        case .standardAI(let sc2ai):
-            setup.difficulty = sc2ai.difficulty.sc2
-            setup.type = .computer
-            setup.race = sc2ai.race.sc2
-            setup.aiBuild = .macro
-        case .observer:
-            setup.type = .observer
-        case .participant(let race):
-            setup.type = .participant
-            setup.race = race.sc2
-        }
-        
-        return setup
+    public var player: ObservedPlayer {
+        ObservedPlayer(player: observation.playerCommon)
     }
 }
 
-public struct SC2AIPlayer {
-    public var race: Race
-    public var difficulty: Difficulty
-    // TODO: Build
+public struct ObservedPlayer {
+    let player: SC2APIProtocol_PlayerCommon
     
-    public init(race: Race, difficulty: Difficulty) {
-        self.race = race
-        self.difficulty = difficulty
+    public var minerals: Int {
+        Int(player.minerals)
+    }
+    
+    public var vespene: Int {
+        Int(player.vespene)
+    }
+    
+    public var usedSupply: Int {
+        Int(player.foodUsed)
+    }
+    
+    public var usedArmySupply: Int {
+        Int(player.foodArmy)
+    }
+    
+    public var usedWorkerSupply: Int {
+        Int(player.foodWorkers)
+    }
+    
+    public var supplyCap: Int {
+        Int(player.foodCap)
+    }
+    
+    public var freeSupply: Int {
+        supplyCap - usedSupply
+    }
+    
+    public var larvaCount: Int {
+        Int(player.larvaCount)
+    }
+    
+    public var warpgateCount: Int {
+        Int(player.warpGateCount)
     }
 }
 
-public enum Race {
-    case zerg, protoss, terran, random
-    
-    var sc2: SC2APIProtocol_Race {
-        switch self {
-        case .protoss:
-            return .protoss
-        case .zerg:
-            return .zerg
-        case .terran:
-            return .terran
-        case .random:
-            return .random
-        }
-    }
-}
-
-public enum Difficulty {
-    case veryEasy // = 1
-    case easy // = 2
-    case medium // = 3
-    case mediumHard // = 4
-    case hard // = 5
-    case harder // = 6
-    case veryHard // = 7
-    case cheatVision // = 8
-    case cheatMoney // = 9
-    case cheatInsane // = 10
-    
-    var sc2: SC2APIProtocol_Difficulty {
-        switch self {
-        case .veryEasy:
-            return .veryEasy
-        case .easy:
-            return .easy
-        case .medium:
-            return .medium
-        case .mediumHard:
-            return .mediumHard
-        case .hard:
-            return .hard
-        case .harder:
-            return .harder
-        case .veryHard:
-            return .veryHard
-        case .cheatVision:
-            return .cheatVision
-        case .cheatMoney:
-            return .cheatMoney
-        case .cheatInsane:
-            return .cheatInsane
-        }
-    }
-}
+public enum Action {}
