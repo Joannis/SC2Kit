@@ -1,14 +1,15 @@
 import Foundation
 import SC2Kit
 
-final class CustomBot: BotPlayer {
-    var configuration: PlayerConfiguration!
-    
+final class CustomBot: BotPlayer, BotPlayerHelpers {
     init() {}
     
-    func onStep(observing observation: Observation) -> [Action] {
-        print(observation.player.minerals)
-        return []
+    func runTick(gamestate: inout GamestateHelper) {
+        print(gamestate.units.only(Drone.self).count)
+        print(gamestate.economy.minerals)
+//        if gamestate.canAfford(Drone.self) {
+//
+//        }
     }
 }
 
@@ -23,7 +24,7 @@ do {
         realtime: true,
         players: [
             .standardAI(SC2AIPlayer(race: .terran, difficulty: .easy)),
-            .participant(.protoss, .bot(CustomBot.self))
+            .participant(.zerg, .bot(CustomBot.self))
         ]
     ).wait()
 

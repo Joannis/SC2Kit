@@ -208,11 +208,9 @@ public final class SC2Client {
             let response = try SC2APIProtocol_Response(serializedData: data)
             
             if !response.error.isEmpty {
-                print(response.error)
                 throw SC2Errors(errors: response.error)
             }
             
-            print(response.status, response.id)
             self.status = response.status
             
             return response[keyPath: outputKeyPath]
@@ -247,7 +245,6 @@ public final class SC2Client {
         
         return send(&request, outputKeyPath: \.createGame).flatMapThrowing { response in
             if response.hasError {
-                print(response.errorDetails)
                 throw response.error
             }
         }
@@ -268,12 +265,17 @@ public final class SC2Client {
         
         return self.send(&request, outputKeyPath: \.joinGame).flatMapThrowing { response in
             if response.hasError {
-                print(response.errorDetails)
                 throw response.error
             }
             
             return PlayerConfiguration(playerId: Int(response.playerID))
         }
+    }
+    
+    func sendActions(_ actions: [Action]) -> EventLoopFuture<Void> {
+        var request = SC2APIProtocol_Request()
+        request.action.actions = actions.map { $0.sc2 }
+        return send(&request, outputKeyPath: \.action).map { response in }
     }
 }
 
@@ -284,7 +286,6 @@ struct SC2Errors: Error {
 }
 
 public protocol BotPlayer {
-    var configuration: PlayerConfiguration! { get set }
     init()
     
     func onStep(observing observation: Observation) -> [Action]
@@ -346,4 +347,48 @@ public struct ObservedPlayer {
     }
 }
 
-public enum Action {}
+public enum Action {
+    case commandUnit(Ability, Target)
+    
+    var sc2: SC2APIProtocol_Action {
+        var action = SC2APIProtocol_Action()
+        
+        switch self {
+        case .commandUnit(let ability, let target):
+            action.actionRaw.unitCommand.abilityID = ability.id
+            action.actionRaw.unitCommand.target = target.sc2
+        }
+        
+        return action
+    }
+}
+
+public enum Target {
+    case none
+    case unit(UnitTag)
+    case position(x: Float, y: Float)
+    
+    var sc2: SC2APIProtocol_ActionRawUnitCommand.OneOf_Target? {
+        switch self {
+        case .none:
+            return nil
+        case .unit(let tag):
+            return .targetUnitTag(tag.tag)
+        case .position(let x, let y):
+            var point = SC2APIProtocol_Point2D()
+            point.x = x
+            point.y = y
+            return .targetWorldSpacePos(point)
+        }
+    }
+}
+
+public struct UnitTag {
+    let tag: UInt64
+}
+
+public enum Ability {
+    var id: Int32 {
+        return 0
+    }
+}
