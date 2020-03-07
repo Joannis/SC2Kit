@@ -1,3 +1,3 @@
 # SC2Kit
 
-A description of this package.
+An implementation of a bot framework for custom SC2 AI players. Can be used for experimentation or machine-leaning leaning.
