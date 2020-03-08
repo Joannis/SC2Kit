@@ -109,8 +109,19 @@ public final class SC2Bot {
         return client.send(&request, outputKeyPath: \.observation).map(Observation.init)
     }
     
+    func sendActions(_ actions: [Action]) -> EventLoopFuture<Void> {
+        client.sendActions(actions)
+    }
+    
     public func tick() -> EventLoopFuture<Void> {
-        return observe().map(bot.onStep).map { _ in }
+        return observe().map(bot.onStep).flatMap(sendActions)
+    }
+    
+    public func paintDebugCommands(_ commands: [DebugCommand]) -> EventLoopFuture<Void> {
+        var request = SC2APIProtocol_Request()
+        request.debug.debug = commands.map { $0.sc2 }
+        
+        return client.send(&request, outputKeyPath: \.debug).map { _ in }
     }
     
     public func startStepping() -> EventLoopFuture<Void> {
@@ -275,7 +286,7 @@ public final class SC2Client {
     func sendActions(_ actions: [Action]) -> EventLoopFuture<Void> {
         var request = SC2APIProtocol_Request()
         request.action.actions = actions.map { $0.sc2 }
-        return send(&request, outputKeyPath: \.action).map { response in }
+        return send(&request, outputKeyPath: \.action).map { _ in }
     }
 }
 
@@ -348,15 +359,15 @@ public struct ObservedPlayer {
 }
 
 public enum Action {
-    case commandUnit(Ability, Target)
+    case commandUnits([UnitTag], Ability)
     
     var sc2: SC2APIProtocol_Action {
         var action = SC2APIProtocol_Action()
         
         switch self {
-        case .commandUnit(let ability, let target):
-            action.actionRaw.unitCommand.abilityID = ability.id
-            action.actionRaw.unitCommand.target = target.sc2
+        case .commandUnits(let tags, let ability):
+            action.actionRaw.unitCommand.abilityID = ability.rawValue
+            action.actionRaw.unitCommand.unitTags = tags.map { $0.tag }
         }
         
         return action
@@ -387,8 +398,22 @@ public struct UnitTag {
     let tag: UInt64
 }
 
-public enum Ability {
-    var id: Int32 {
-        return 0
+public enum Ability: Int32 {
+    case trainDrone = 1342
+    case trainZergling = 1343
+    case trainOverlord = 1344
+    case droneGather = 1183
+    
+    var trainedUnit: UnitType? {
+        switch self {
+        case .trainDrone:
+            return .drone
+        case .trainZergling:
+            return .zergling
+        case .trainOverlord:
+            return .overlord
+        default:
+            return nil
+        }
     }
 }

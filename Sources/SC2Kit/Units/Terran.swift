@@ -1,5 +1,6 @@
-public struct SCV: Unit {
+public struct SCV: Unit, SC2Unit {
     public static let cost: Cost = .minerals(50)
+    public static let supply = 0
     public static let type: UnitType = .scv
     
     let sc2: SC2APIProtocol_Unit

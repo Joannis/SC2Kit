@@ -1,5 +1,94 @@
+public struct AnyUnit: _SC2Unit {
+    let sc2: SC2APIProtocol_Unit
+    let helper: GamestateHelper
+
+    public var type: UnitType? {
+        UnitType(rawValue: sc2.unitType)
+    }
+}
+
+public extension Array where Element == AnyUnit {
+    var friendly: [AnyUnit] {
+        self.filter { $0.isFriendly }
+    }
+    
+    var neutral: [AnyUnit] {
+        self.filter { $0.isNeutral }
+    }
+    
+    var enemy: [AnyUnit] {
+        self.filter { $0.isEnemy }
+    }
+    
+    func only<U: Unit>(_ unit: U.Type) -> [U]  {
+        self.filter { $0.type == U.type }.compactMap(U.init)
+    }
+}
+
+protocol _SC2Unit {
+    var sc2: SC2APIProtocol_Unit { get }
+    var helper: GamestateHelper { get }
+}
+
+protocol SC2Unit: _SC2Unit, Unit {}
+extension _SC2Unit {
+    public var isVisible: Bool {
+        sc2.displayType == .visible
+    }
+    
+    public var isHidden: Bool {
+        sc2.displayType == .hidden
+    }
+    
+    public var worldPosition: Position.World {
+        Position.World(sc2: sc2.pos)
+    }
+    
+    public var tag: UnitTag {
+        UnitTag(tag: sc2.tag)
+    }
+    
+    public var health: Float {
+        sc2.health
+    }
+    
+    public var maxHealth: Float {
+        sc2.healthMax
+    }
+    
+    public var isFriendly: Bool {
+        sc2.alliance == .ally
+    }
+    
+    public var isEnemy: Bool {
+        sc2.alliance == .enemy
+    }
+    
+    public var isNeutral: Bool {
+        sc2.alliance == .neutral
+    }
+}
+
+public protocol Unit {
+    static var cost: Cost { get }
+    static var type: UnitType { get }
+    static var supply: Int { get }
+    
+    init?(anyUnit: AnyUnit)
+}
+
+public protocol Building: Unit {}
+protocol SC2Building: Building, _SC2Unit {}
+
+extension SC2Building {
+    public var buildProgress: Float {
+        sc2.buildProgress
+    }
+}
+
 public enum UnitType: UInt32 {
     case scv = 45
+    case hellbat = 484
     
     case probe = 84
     
@@ -44,12 +133,9 @@ public enum UnitType: UInt32 {
     case burrowedInfestor = 127
     case overlordCocoon = 128
     case overseer = 129
+    case larva = 151
+    case locust = 489
     
-    case mineralField = 341
-    case vespeneGeyser = 342
-    case spacePlatformGeyser = 343
-    case richVespeneGeyser = 344
-    // 345..<471 random environment stuff
     case unbuildableRocks = 472
     case unbuildableBricks = 473
     case unbuildablePlates = 474
@@ -59,37 +145,60 @@ public enum UnitType: UInt32 {
     case enemyPathingBlocker4x4 = 478
     case enemyPathingBlocker8x8 = 479
     case enemyPathingBlocker16x16 = 480
-    // 481 = scopeTest
-    // 482 = SentryACGluescreenDummy
-    case hellbat = 484
-    // 485 = CollapsibleTerranTowerDebris
     case debrisRampLeft = 486
     case debrisRampRight = 487
     case mothershipCore = 488
-    case locust = 489
-    // TODO: ...1942
-}
-
-public struct AnyUnit {
-    let sc2: SC2APIProtocol_Unit
-    let helper: GamestateHelper
-
-    public var type: UnitType? {
-        UnitType(rawValue: sc2.unitType)
-    }
-}
-
-public extension Array where Element == AnyUnit {
-    func only<U: Unit>(_ unit: U.Type) -> [U]  {
-        self.filter { $0.type == U.type }.compactMap(U.init)
-    }
-}
-
-public protocol Unit {
-    static var cost: Cost { get }
-    static var type: UnitType { get }
     
-    init?(anyUnit: AnyUnit)
+    case battlestationMineralField = 886
+    case battlestationMineralField750 = 887
+    case forcefield = 135
+    case labMineralField = 665
+    case labMineralField750 = 666
+    case mineralField = 341
+    case mineralField750 = 383
+    case protossVespeneGeyser = 608
+    case purifierMineralField = 884
+    case purifierMineralField750 = 885
+    case purifierRichMineralField = 796
+    case purifierRichMineralField750 = 797
+    case purifierVespeneGeyser = 880
+    case richMineralField = 146
+    case richMineralField750 = 147
+    case richVespeneGeyser = 344
+    case shakurasVespeneGeyser = 881
+    case spacePlatformGeyser = 343
+    case vespeneGeyser = 342
+    
+    case xelnagaTower = 149
+    
+    public var isMinerals: Bool {
+        switch self {
+        case .mineralField, .mineralField750, .battlestationMineralField, .battlestationMineralField750, .labMineralField, .labMineralField750, .purifierMineralField, .purifierMineralField750, .purifierRichMineralField, .purifierRichMineralField750, .richMineralField, .richMineralField750:
+            return true
+        default:
+            return false
+        }
+    }
+    
+    public var isRichMinerals: Bool {
+        switch self {
+        case .purifierRichMineralField, .purifierRichMineralField750, .richMineralField, .richMineralField750:
+            return true
+        default:
+            return false
+        }
+    }
+    
+    public var isVespeneGeyser: Bool {
+        switch self {
+        case .vespeneGeyser, .protossVespeneGeyser, .spacePlatformGeyser, .purifierVespeneGeyser, .shakurasVespeneGeyser, .richVespeneGeyser:
+            return true
+        default:
+            return false
+        }
+    }
+    
+    public var isRichVespeneGeyser: Bool {
+        self == .richVespeneGeyser
+    }
 }
-
-public protocol Building: Unit {}
