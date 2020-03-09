@@ -1,58 +1,54 @@
 // - MARK: Units
-protocol ZergLarvaUnit: SC2Unit {
+public protocol ZergLarvaUnit: Entity {
     static var trainAbility: Ability { get }
 }
 
-extension ZergLarvaUnit {
+public protocol ZergDroneBuilding: Building {
+    static var buildAbility: Ability { get }
+}
+
+extension SC2Unit where E: ZergLarvaUnit {
     public var isBurrowed: Bool { sc2.isBurrowed }
 }
 
-public struct Drone: ZergLarvaUnit {
+public enum Drone: ZergLarvaUnit {
     public static let cost: Cost = .minerals(50)
     public static let supply = 1
     public static let type: UnitType = .drone
-    static let trainAbility = Ability.trainDrone
-    
-    let sc2: SC2APIProtocol_Unit
-    let helper: GamestateHelper
-    
-    public init?(anyUnit: AnyUnit) {
-        guard anyUnit.type == Self.type else { return nil }
-        self.sc2 = anyUnit.sc2
-        self.helper = anyUnit.helper
+    public static let trainAbility = Ability.trainDrone
+}
+
+extension SC2Unit where E == Drone {
+    public func buildHatchery(at position: Position.World2D) {
+        _ = helper.train(Hatchery.self) {
+            let placement = PlaceBuilding(
+                unit: self.tag,
+                ability: .buildHatchery,
+                ignoreResourceRequirements: true,
+                position: position
+            ) { gamestate in
+                gamestate.actions.append(.commandUnits([self.tag], .buildHatchery, .position(position)))
+            }
+            
+            helper.placedBuildings.append(placement)
+        }
     }
 }
 
-public struct Overlord: ZergLarvaUnit {
+public enum Overlord: ZergLarvaUnit {
     public static let cost: Cost = .minerals(100)
     public static let supply = 0
     public static let type: UnitType = .overlord
-    static let trainAbility = Ability.trainOverlord
-    
-    let sc2: SC2APIProtocol_Unit
-    let helper: GamestateHelper
-    
-    public init?(anyUnit: AnyUnit) {
-        guard anyUnit.type == Self.type else { return nil }
-        self.sc2 = anyUnit.sc2
-        self.helper = anyUnit.helper
-    }
+    public static let trainAbility = Ability.trainOverlord
 }
 
-public struct Larva: SC2Unit {
+public enum Larva: Entity {
     public static var cost: Cost = .none
     public static let supply = 0
     public static let type: UnitType = .larva
-    
-    let sc2: SC2APIProtocol_Unit
-    let helper: GamestateHelper
-    
-    public init?(anyUnit: AnyUnit) {
-        guard anyUnit.type == Self.type else { return nil }
-        self.sc2 = anyUnit.sc2
-        self.helper = anyUnit.helper
-    }
-    
+}
+
+extension SC2Unit where E == Larva {
     public func trainDrone() -> Bool {
         spawn(into: Drone.self)
     }
@@ -63,25 +59,18 @@ public struct Larva: SC2Unit {
     
     private func spawn<Z: ZergLarvaUnit>(into entity: Z.Type) -> Bool {
         return helper.train(Z.self) {
-            helper.actions.append(.commandUnits([self.tag], Z.trainAbility))
+            helper.actions.append(.commandUnits([self.tag], Z.trainAbility, .none))
         }
     }
 }
 
-public struct Egg: SC2Unit {
+public enum Egg: Entity {
     public static let cost: Cost = .none
     public static let supply = 0
     public static var type: UnitType = .egg
-    
-    let sc2: SC2APIProtocol_Unit
-    let helper: GamestateHelper
-    
-    public init?(anyUnit: AnyUnit) {
-        guard anyUnit.type == Self.type else { return nil }
-        self.sc2 = anyUnit.sc2
-        self.helper = anyUnit.helper
-    }
-    
+}
+
+extension SC2Unit where E == Egg {
     public var spawningInto: UnitType? {
         for order in sc2.orders {
             if let trainedUnit = Ability(rawValue: Int32(order.abilityID))?.trainedUnit {
@@ -93,28 +82,22 @@ public struct Egg: SC2Unit {
     }
 }
 
-extension Array where Element == Egg {
-    public func spawning(into type: UnitType) -> [Egg] {
+extension Array where Element == SC2Unit<Egg> {
+    public func spawning(into type: UnitType) -> [SC2Unit<Egg>] {
         filter { $0.spawningInto == type }
     }
 }
 
 // - MARK: Buildings
 
-public struct Hatchery: SC2Building {
+public enum Hatchery: ZergDroneBuilding {
     public static let cost: Cost = .minerals(300)
     public static let supply = 0
     public static let type: UnitType = .hatchery
-    
-    let sc2: SC2APIProtocol_Unit
-    let helper: GamestateHelper
-    
-    public init?(anyUnit: AnyUnit) {
-        guard anyUnit.type == Self.type else { return nil }
-        self.sc2 = anyUnit.sc2
-        self.helper = anyUnit.helper
-    }
-    
+    public static let buildAbility = Ability.buildHatchery
+}
+
+extension SC2Unit where E == Hatchery {
     public var idealHarvesters: Int {
         Int(sc2.idealHarvesters)
     }

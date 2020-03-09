@@ -69,6 +69,10 @@ public final class SC2Game {
             }
             
             return joinPlayer(0)
+        }.flatMap {
+            let done = self.bots.map { $0.startStepping(realtime: realtime) }
+            
+            return EventLoopFuture.andAllComplete(done, on: self.loop)
         }
     }
     
@@ -94,6 +98,7 @@ public final class SC2Bot {
     private var stepping = false
     fileprivate let bot: BotPlayer
     private let client: SC2Client
+    private let gamestate = GamestateHelper(observation: Observation(response: .init()))
     
     fileprivate init(configuration: PlayerConfiguration, bot: BotPlayer, client: SC2Client) {
         self.configuration = configuration
@@ -110,21 +115,71 @@ public final class SC2Bot {
     }
     
     func sendActions(_ actions: [Action]) -> EventLoopFuture<Void> {
-        client.sendActions(actions)
+        if actions.isEmpty {
+            return self.client.eventLoop.makeSucceededFuture(())
+        } else {
+            return client.sendActions(actions)
+        }
     }
     
-    public func tick() -> EventLoopFuture<Void> {
-        return observe().map(bot.onStep).flatMap(sendActions)
+    public func tick(placedBuildings: [PlaceBuilding]) -> EventLoopFuture<[PlaceBuilding]> {
+        return observe().flatMap { observation in
+            self.gamestate.observation = observation
+            self.gamestate.actions.removeAll(keepingCapacity: true)
+            self.gamestate.placedBuildings.removeAll(keepingCapacity: true)
+            
+            for building in placedBuildings {
+                building.onSuccess(self.gamestate)
+            }
+            
+            self.bot.runTick(gamestate: self.gamestate)
+            return self.paintDebugCommands(self.bot.debug()).flatMap {
+                self.sendActions(self.gamestate.actions)
+            }.map {
+                self.gamestate.placedBuildings
+//                let resolvedPlacements = self.gamestate.placedBuildings.map { building -> EventLoopFuture<PlaceBuilding?> in
+//                    self.canPlaceBuilding(building).map { $0 ? building : nil }
+//                }
+                
+//                return EventLoopFuture.whenAllSucceed(resolvedPlacements, on: self.client.eventLoop).map {
+//                    $0.compactMap { $0 }
+//                }
+            }
+        }
+    }
+    
+    public func canPlaceBuilding(
+        _ placedBuilding: PlaceBuilding
+    ) -> EventLoopFuture<Bool> {
+        var request = SC2APIProtocol_Request()
+        var placement = SC2APIProtocol_RequestQueryBuildingPlacement()
+        placement.abilityID = placedBuilding.ability.rawValue
+        placement.placingUnitTag = placedBuilding.unit.tag
+        placement.targetPos = placedBuilding.position.sc2
+        request.query.placements = [placement]
+        request.query.ignoreResourceRequirements = placedBuilding.ignoreResourceRequirements
+        
+        return client.send(&request, outputKeyPath: \.query).flatMapThrowing { response in
+            guard response.placements.count == 1 else {
+                throw InvalidResponse()
+            }
+            
+            return PlacementResponse(response: response.placements[0]).success
+        }
     }
     
     public func paintDebugCommands(_ commands: [DebugCommand]) -> EventLoopFuture<Void> {
+        if commands.isEmpty {
+            return self.client.eventLoop.makeSucceededFuture(())
+        }
+        
         var request = SC2APIProtocol_Request()
         request.debug.debug = commands.map { $0.sc2 }
         
         return client.send(&request, outputKeyPath: \.debug).map { _ in }
     }
     
-    public func startStepping() -> EventLoopFuture<Void> {
+    func startStepping(realtime: Bool) -> EventLoopFuture<Void> {
         assert(client.status == .inGame)
         
         guard !stepping else {
@@ -133,22 +188,31 @@ public final class SC2Bot {
         
         stepping = true
         
-        func nextTick() -> EventLoopFuture<Void> {
-            self.tick().flatMap {
-                nextTick()
+        func nextTick(placedBuildings: [PlaceBuilding]) -> EventLoopFuture<Void> {
+            self.tick(placedBuildings: placedBuildings).flatMap { newPlacedBuildings in
+                if realtime {
+                    return nextTick(placedBuildings: newPlacedBuildings)
+                } else {
+                    var request = SC2APIProtocol_Request()
+                    assert(self.bot.loopsPerTick > 0, "Cannot increment by less than 1 step")
+                    request.step.count = UInt32(self.bot.loopsPerTick)
+                    return self.client.send(&request, outputKeyPath: \.step).flatMap { _ in
+                        nextTick(placedBuildings: newPlacedBuildings)
+                    }
+                }
             }
         }
         
-        return nextTick()
+        return nextTick(placedBuildings: [])
     }
 }
 
-struct Closed: Error {}
-
 public final class SC2Client {
     private let websocket: WebSocket
-    private var promise: EventLoopPromise<ByteBuffer>?
+    public var eventLoop: EventLoop { websocket.eventLoop }
+    private var promises = [UInt32: EventLoopPromise<SC2APIProtocol_Response>]()
     public let port: Int
+    private var id: UInt32 = 0
     internal private(set) var status: SC2APIProtocol_Status = .launched
     
     private init(websocket: WebSocket, port: Int) {
@@ -160,12 +224,20 @@ public final class SC2Client {
         }
         
         websocket.onClose.whenSuccess { [unowned self] in
-            self.promise?.fail(Closed())
+            for promise in self.promises.values {
+                promise.fail(Closed())
+            }
         }
     }
     
     func receiveData(_ data: ByteBuffer) {
-        promise?.succeed(data)
+        do {
+            let data = data.getData(at: 0, length: data.readableBytes)!
+            let response = try SC2APIProtocol_Response(serializedData: data)
+            promises[response.id]?.succeed(response)
+        } catch {
+            print(error)
+        }
     }
     
     static func connect(group: EventLoopGroup, port: Int) -> EventLoopFuture<SC2Client> {
@@ -196,28 +268,24 @@ public final class SC2Client {
         return retry(timeout)
     }
     
-    internal func send<Output: SwiftProtobuf.Message>(_ input: inout SC2APIProtocol_Request, outputKeyPath: KeyPath<SC2APIProtocol_Response, Output>) -> EventLoopFuture<Output> {
+    internal func send<Output>(_ input: inout SC2APIProtocol_Request, outputKeyPath: KeyPath<SC2APIProtocol_Response, Output>) -> EventLoopFuture<Output> {
         if websocket.isClosed {
             return self.websocket.eventLoop.makeFailedFuture(Closed())
         }
         
-        // TODO: Support pipelining
-        assert(promise == nil)
-        
         do {
+            input.id = self.id
+            self.id = self.id &+ 1
+            
             try websocket.send(raw: input.serializedData(), opcode: .binary)
         } catch {
             return websocket.eventLoop.makeFailedFuture(error)
         }
         
-        let promise = websocket.eventLoop.makePromise(of: ByteBuffer.self)
-        self.promise = promise
+        let promise = websocket.eventLoop.makePromise(of: SC2APIProtocol_Response.self)
+        self.promises[input.id] = promise
         
-        return promise.futureResult.flatMapThrowing { buffer -> Output in
-            self.promise = nil
-            let data = buffer.getData(at: 0, length: buffer.readableBytes)!
-            let response = try SC2APIProtocol_Response(serializedData: data)
-            
+        return promise.futureResult.flatMapThrowing { response -> Output in
             if !response.error.isEmpty {
                 throw SC2Errors(errors: response.error)
             }
@@ -286,20 +354,22 @@ public final class SC2Client {
     func sendActions(_ actions: [Action]) -> EventLoopFuture<Void> {
         var request = SC2APIProtocol_Request()
         request.action.actions = actions.map { $0.sc2 }
-        return send(&request, outputKeyPath: \.action).map { _ in }
+        return send(&request, outputKeyPath: \.action).map { response in
+            print(response)
+        }
     }
 }
 
 extension SC2APIProtocol_ResponseCreateGame.Error: Error {}
 extension SC2APIProtocol_ResponseJoinGame.Error: Error {}
+struct Closed: Error {}
+struct InvalidResponse: Error {}
 struct SC2Errors: Error {
     let errors: [String]
 }
 
-public protocol BotPlayer {
-    init()
-    
-    func onStep(observing observation: Observation) -> [Action]
+extension BotPlayer {
+    public func debug() -> [DebugCommand] { [] }
 }
 
 public struct PlayerConfiguration {
@@ -359,15 +429,17 @@ public struct ObservedPlayer {
 }
 
 public enum Action {
-    case commandUnits([UnitTag], Ability)
+    case commandUnits([UnitTag], Ability, Target)
     
     var sc2: SC2APIProtocol_Action {
         var action = SC2APIProtocol_Action()
         
         switch self {
-        case .commandUnits(let tags, let ability):
+        case .commandUnits(let tags, let ability, let target):
             action.actionRaw.unitCommand.abilityID = ability.rawValue
             action.actionRaw.unitCommand.unitTags = tags.map { $0.tag }
+            action.actionRaw.unitCommand.target = target.sc2
+            action.actionRaw.unitCommand.queueCommand = true
         }
         
         return action
@@ -377,7 +449,7 @@ public enum Action {
 public enum Target {
     case none
     case unit(UnitTag)
-    case position(x: Float, y: Float)
+    case position(Position.World2D)
     
     var sc2: SC2APIProtocol_ActionRawUnitCommand.OneOf_Target? {
         switch self {
@@ -385,11 +457,8 @@ public enum Target {
             return nil
         case .unit(let tag):
             return .targetUnitTag(tag.tag)
-        case .position(let x, let y):
-            var point = SC2APIProtocol_Point2D()
-            point.x = x
-            point.y = y
-            return .targetWorldSpacePos(point)
+        case .position(let position):
+            return .targetWorldSpacePos(position.sc2)
         }
     }
 }
@@ -403,6 +472,8 @@ public enum Ability: Int32 {
     case trainZergling = 1343
     case trainOverlord = 1344
     case droneGather = 1183
+    case buildHatchery = 1152
+    case move = 3794
     
     var trainedUnit: UnitType? {
         switch self {
@@ -415,5 +486,13 @@ public enum Ability: Int32 {
         default:
             return nil
         }
+    }
+}
+
+public struct PlacementResponse {
+    let response: SC2APIProtocol_ResponseQueryBuildingPlacement
+    
+    public var success: Bool {
+        response.result == .success
     }
 }

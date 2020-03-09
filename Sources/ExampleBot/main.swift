@@ -1,8 +1,8 @@
 import Foundation
 import SC2Kit
 
-extension Array where Element == Larva {
-    mutating func makeSupply(spawningOverlords: Int, gamestate: inout GamestateHelper) {
+extension Array where Element == SC2Unit<Larva> {
+    mutating func makeSupply(spawningOverlords: Int, gamestate: GamestateHelper) {
         let freeSupply = gamestate.economy.freeSupply + (spawningOverlords * 8)
         if freeSupply <= 2 {
             var neededSupply = gamestate.economy.supplyCap / 50
@@ -31,7 +31,7 @@ extension Array where Element == Larva {
         }
     }
     
-    mutating func trainDrones(_ drones: Int, gamestate: inout GamestateHelper) {
+    mutating func trainDrones(_ drones: Int, gamestate: GamestateHelper) {
         var drones = drones
 
         var copy = self
@@ -54,10 +54,62 @@ extension Array where Element == Larva {
     }
 }
 
-final class CustomBot: BotPlayer, BotPlayerHelpers {
+final class CustomBot: BotPlayer {
+    var debugCommands = [DebugCommand]()
+    var clusters: [(MineralCluster, Position.World)]?
+    var expanding: Position.World2D?
+    
+    func getClusters(gamestate: GamestateHelper) -> [(MineralCluster, Position.World)] {
+        if let clusters = self.clusters {
+            return clusters
+        }
+        
+        let mineralClusters = gamestate.units.minerals.formClusters().map { cluster in
+            (cluster, cluster.approximateExpansionLocation)
+        }
+        
+        self.clusters = mineralClusters
+        return mineralClusters
+    }
+    
     init() {}
     
-    func expand() {
+    func expand(gamestate: GamestateHelper) {
+        // Detect current expansions and ignore those clusters
+        let allClusters = getClusters(gamestate: gamestate)
+        
+        // TODO: Classify on occupation, not unscouted
+        var possibleExpansions = allClusters.filter { $0.0.hasUnscoutedMinerals }
+        
+        for (_, expansionPosition) in allClusters {
+            debugCommands.append(.draw([
+                .sphere(.init(at: expansionPosition, range: 5, color: .blue))
+            ]))
+        }
+        
+        guard
+            expanding == nil,
+            gamestate.canAfford(Hatchery.self),
+            let drone = gamestate.units.only(Drone.self).randomElement()
+        else {
+            return
+        }
+        
+        possibleExpansions.sort { lhs, rhs in
+            let lhsDistance = lhs.1.as2D.distanceXY(to: drone.worldPosition.as2D)
+            let rhsDistance = rhs.1.as2D.distanceXY(to: drone.worldPosition.as2D)
+            
+            return lhsDistance < rhsDistance
+        }
+        
+        if let (_, position) = possibleExpansions.first {
+            drone.buildHatchery(at: position.as2D)
+            self.expanding = position.as2D
+            print("expanding to \(position.x) \(position.y)")
+        }
+        
+        // Choose base furthest from the enemy
+        
         // Return if it's not safe now
         // Return if we have no idle workers
         
@@ -65,25 +117,33 @@ final class CustomBot: BotPlayer, BotPlayerHelpers {
         // Expand if we're floating too many minerals
     }
     
-    func runTick(gamestate: inout GamestateHelper) {
+    func debug() -> [DebugCommand] {
+        return debugCommands
+    }
+    
+    func runTick(gamestate: GamestateHelper) {
+        debugCommands.removeAll(keepingCapacity: true)
+        
         var larva = gamestate.units.only(Larva.self)
         let eggs = gamestate.units.only(Egg.self)
         let spawningOverlords = eggs.spawning(into: .overlord).count
         let spawningDrones = eggs.spawning(into: .overlord).count
+
+        self.expand(gamestate: gamestate)
         
-        let mineralClusters = gamestate.units.minerals.formClusters()
-        print(mineralClusters.count, " total known clusters")
+        larva.makeSupply(spawningOverlords: spawningOverlords, gamestate: gamestate)
         
-        for cluster in mineralClusters {
-            print("Cluster remaining minerals", cluster.remainingMinerals)
+        if gamestate.economy.usedWorkerSupply < 70 {
+            let surplusDrones = gamestate.units.only(Hatchery.self).reduce(0, { $0 + $1.harvesterSurplus }) - spawningDrones
+            // TODO: Balance vespene & minerals
+            larva.trainDrones(-surplusDrones, gamestate: gamestate)
         }
         
-        larva.makeSupply(spawningOverlords: spawningOverlords, gamestate: &gamestate)
+        let spheres = gamestate.units.only(Drone.self).map { drone -> DebugDrawable in
+            return .sphere(.init(at: drone.worldPosition, range: 1, color: .blue))
+        }
         
-        let surplusDrones = gamestate.units.only(Hatchery.self).reduce(0, { $0 + $1.harvesterSurplus }) - spawningDrones
-        // Train drones until we're at max 70
-        // Balance vespene & minerals
-        larva.trainDrones(-surplusDrones, gamestate: &gamestate)
+        debugCommands.append(.draw(spheres))
     }
 }
 
@@ -95,18 +155,12 @@ do {
     try game.startGame(
         onMap: .localPath(localMap),
     //    onMap: .battlenet(blizzardMap),
-        realtime: true,
+        realtime: false,
         players: [
             .standardAI(SC2AIPlayer(race: .terran, difficulty: .easy)),
             .participant(.zerg, .bot(CustomBot.self))
         ]
     ).wait()
-
-    let futures = game.bots.map { $0.startStepping() }
-
-    for future in futures {
-        try future.wait()
-    }
 } catch {
     try game.quit().wait()
     throw error

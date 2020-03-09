@@ -1,20 +1,27 @@
-public protocol BotPlayerHelpers: BotPlayer {
-    func runTick(gamestate: inout GamestateHelper)
+public protocol BotPlayer {
+    init()
+    var loopsPerTick: Int { get }
+    
+    func runTick(gamestate: GamestateHelper)
+    func debug() -> [DebugCommand]
 }
 
-extension BotPlayerHelpers {
-    public func onStep(observing observation: Observation) -> [Action] {
-        var helper = GamestateHelper(observation: observation)
-        
-        runTick(gamestate: &helper)
-        
-        return helper.actions
-    }
+public struct PlaceBuilding {
+    public let unit: UnitTag
+    public let ability: Ability
+    public var ignoreResourceRequirements: Bool
+    public let position: Position.World2D
+    public let onSuccess: (GamestateHelper) -> ()
+}
+
+extension BotPlayer {
+    public var loopsPerTick: Int { 1 }
 }
 
 public final class GamestateHelper {
     public internal(set) var observation: Observation
-    public internal(set) var actions = [Action]()
+    internal var actions = [Action]()
+    internal var placedBuildings = [PlaceBuilding]()
     
     init(observation: Observation) {
         self.observation = observation
@@ -30,15 +37,15 @@ public final class GamestateHelper {
         }
     }
     
-    public func canAfford<U: Unit>(_ unit: U.Type) -> Bool {
+    public func canAfford<U: Entity>(_ unit: U.Type) -> Bool {
         self.canAfford(U.cost)
     }
     
-    public func canTrain<U: Unit>(_ unit: U.Type) -> Bool {
-        unit.supply < economy.freeSupply && canAfford(U.cost)
+    public func canTrain<U: Entity>(_ unit: U.Type) -> Bool {
+        unit.supply <= economy.freeSupply && canAfford(U.cost)
     }
     
-    public func afford<U: Unit>(_ unit: U.Type, run: () -> ()) -> Bool {
+    public func afford<U: Entity>(_ unit: U.Type, run: () -> ()) -> Bool {
         if !self.canAfford(U.cost) {
             return false
         }
@@ -48,7 +55,7 @@ public final class GamestateHelper {
         return true
     }
     
-    public func train<U: Unit>(_ unit: U.Type, run: () -> ()) -> Bool {
+    public func train<U: Entity>(_ unit: U.Type, run: () -> ()) -> Bool {
         if !canTrain(unit) {
             return false
         }
@@ -96,26 +103,82 @@ public struct Cost {
 
 public struct Position {
     public struct World {
-        let sc2: SC2APIProtocol_Point
+        var sc2: SC2APIProtocol_Point
         
-        public var x: Float { sc2.x }
-        public var y: Float { sc2.y }
-        public var z: Float { sc2.z }
+        init(sc2: SC2APIProtocol_Point) {
+            self.sc2 = sc2
+        }
         
-        public func distanceXY(to coordinate: Self) -> Float {
+        init(x: Float, y: Float, z: Float) {
+            var sc2 = SC2APIProtocol_Point()
+            sc2.x = x
+            sc2.y = y
+            sc2.z = z
+            self.sc2 = sc2
+        }
+        
+        public var x: Float {
+            get { sc2.x }
+            set { sc2.x = newValue }
+        }
+        
+        public var y: Float {
+            get { sc2.y }
+            set { sc2.y = newValue }
+        }
+        
+        public var z: Float {
+            get { sc2.z }
+            set { sc2.z = newValue }
+        }
+        
+        public var as2D: World2D {
+            World2D(x: x, y: y)
+        }
+    }
+    
+    public struct World2D {
+        var sc2: SC2APIProtocol_Point2D
+        
+        init(sc2: SC2APIProtocol_Point2D) {
+            self.sc2 = sc2
+        }
+        
+        init(x: Float, y: Float) {
+            var sc2 = SC2APIProtocol_Point2D()
+            sc2.x = x
+            sc2.y = y
+            self.sc2 = sc2
+        }
+        
+        public func distanceXorY(to coordinate: Self) -> Float {
             max(
                 distance(inSpace: \.x, to: coordinate),
                 distance(inSpace: \.y, to: coordinate)
             )
         }
         
+        public func distanceXY(to coordinate: Self) -> Float {
+            let differenceX = distance(inSpace: \.x, to: coordinate)
+            let differenceY = distance(inSpace: \.y, to: coordinate)
+            let squaredX = differenceX * differenceX
+            let squaredY = differenceY * differenceY
+            return (squaredX + squaredY).squareRoot()
+        }
+        
         public func distance(inSpace space: KeyPath<Self, Float>, to coordinate: Self) -> Float {
             abs(coordinate[keyPath: space] - self[keyPath: space])
         }
-    }
-    
-    public struct World2D {
-        let sc2: SC2APIProtocol_Point2D
+        
+        public var x: Float {
+            get { sc2.x }
+            set { sc2.x = newValue }
+        }
+        
+        public var y: Float {
+            get { sc2.y }
+            set { sc2.y = newValue }
+        }
     }
     
     public struct Minimap {

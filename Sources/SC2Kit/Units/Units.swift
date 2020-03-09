@@ -1,37 +1,51 @@
-public struct AnyUnit: _SC2Unit {
+public struct AnyUnit {
     let sc2: SC2APIProtocol_Unit
     let helper: GamestateHelper
 
     public var type: UnitType? {
         UnitType(rawValue: sc2.unitType)
     }
+    
+    public var isFriendly: Bool {
+        sc2.alliance == .ally
+    }
+    
+    public var isEnemy: Bool {
+        sc2.alliance == .enemy
+    }
+    
+    public var isNeutral: Bool {
+        sc2.alliance == .neutral
+    }
 }
 
-public extension Array where Element == AnyUnit {
-    var friendly: [AnyUnit] {
+extension Array where Element == AnyUnit {
+    public var friendly: [AnyUnit] {
         self.filter { $0.isFriendly }
     }
     
-    var neutral: [AnyUnit] {
+    public var neutral: [AnyUnit] {
         self.filter { $0.isNeutral }
     }
     
-    var enemy: [AnyUnit] {
+    public var enemy: [AnyUnit] {
         self.filter { $0.isEnemy }
     }
     
-    func only<U: Unit>(_ unit: U.Type) -> [U]  {
-        self.filter { $0.type == U.type }.compactMap(U.init)
+    public func only<U: Entity>(_ unit: U.Type) -> [SC2Unit<U>]  {
+        self.filter { $0.type == U.type }.compactMap(SC2Unit<U>.init)
     }
 }
 
-protocol _SC2Unit {
-    var sc2: SC2APIProtocol_Unit { get }
-    var helper: GamestateHelper { get }
-}
-
-protocol SC2Unit: _SC2Unit, Unit {}
-extension _SC2Unit {
+public struct SC2Unit<E: AnyEntity> {
+    let sc2: SC2APIProtocol_Unit
+    let helper: GamestateHelper
+    
+    init?(anyUnit: AnyUnit) {
+        self.sc2 = anyUnit.sc2
+        self.helper = anyUnit.helper
+    }
+    
     public var isVisible: Bool {
         sc2.displayType == .visible
     }
@@ -69,18 +83,16 @@ extension _SC2Unit {
     }
 }
 
-public protocol Unit {
+public protocol AnyEntity {}
+public protocol Entity: AnyEntity {
     static var cost: Cost { get }
     static var type: UnitType { get }
     static var supply: Int { get }
-    
-    init?(anyUnit: AnyUnit)
 }
 
-public protocol Building: Unit {}
-protocol SC2Building: Building, _SC2Unit {}
+public protocol Building: Entity {}
 
-extension SC2Building {
+extension SC2Unit where E: Building {
     public var buildProgress: Float {
         sc2.buildProgress
     }
