@@ -65,7 +65,7 @@ final class CustomBot: BotPlayer {
             return clusters
         }
         
-        let mineralClusters = gamestate.units.minerals.formClusters().map { cluster in
+        let mineralClusters = gamestate.units.resources.formClusters().map { cluster in
             (cluster, cluster.approximateExpansionLocation)
         }
         
@@ -90,26 +90,6 @@ final class CustomBot: BotPlayer {
         // TODO: Classify on occupation, not unscouted
         var possibleExpansions = allClusters.filter { $0.0.hasUnscoutedMinerals }
         
-        for (cluster, expansionPosition) in allClusters {
-            let centerOfMass = cluster.centerOfMass
-            debugCommands.append(.draw([
-                .sphere(.init(at: expansionPosition, range: 5, color: .blue)),
-                .sphere(.init(at: centerOfMass, range: 1, color: .green)),
-                .sphere(.init(at: cluster.closestMinerals(to: centerOfMass).worldPosition, range: 1, color: .red)),
-                .text(DebugString(text: String(cluster.mineralPatches.count), color: .white, position: .world(centerOfMass)))
-            ]))
-            
-            debugCommands.append(.draw(cluster.mineralPatches.map { mineral in
-                let distance = mineral.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
-                return .text(DebugString(text: "\(distance)", color: .white, position: .world(mineral.worldPosition)))
-            }))
-            
-            debugCommands.append(.draw(cluster.mineralPatches.map { mineral in
-                let distance = mineral.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
-                return .sphere(.init(at: mineral.worldPosition, range: 0.5, color: .white))
-            }))
-        }
-        
         let drones = gamestate.units.only(Drone.self)
         
         let isExpanding = drones.contains { $0.orders.contains { $0.ability == .buildHatchery } }
@@ -132,7 +112,7 @@ final class CustomBot: BotPlayer {
         if let (_, position) = possibleExpansions.first {
             drone.buildHatchery(at: position.as2D)
             self.expanding = position.as2D
-            // TODO: What if it cannot?
+            // TODO: What if it cannot, don't endlessly fail, give up?
             print("expanding to \(position.x) \(position.y)")
         }
         
@@ -155,7 +135,6 @@ final class CustomBot: BotPlayer {
 //        if ticks > 25 * 300 {
 //            gamestate.quit()
 //        }
-        debugCommands.removeAll(keepingCapacity: true)
         
         var larva = gamestate.units.only(Larva.self)
         let eggs = gamestate.units.only(Egg.self)
@@ -171,12 +150,6 @@ final class CustomBot: BotPlayer {
             // TODO: Balance vespene & minerals
             larva.trainDrones(-surplusDrones, gamestate: gamestate)
         }
-        
-        let spheres = gamestate.units.only(Drone.self).map { drone -> DebugDrawable in
-            return .sphere(.init(at: drone.worldPosition, range: 1, color: .blue))
-        }
-        
-        debugCommands.append(.draw(spheres))
     }
 }
 

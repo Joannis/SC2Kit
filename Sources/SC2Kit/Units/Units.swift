@@ -41,6 +41,14 @@ public struct SC2Unit<E: AnyEntity> {
     let sc2: SC2APIProtocol_Unit
     let helper: GamestateHelper
     
+    init(
+        sc2: SC2APIProtocol_Unit,
+        helper: GamestateHelper
+    ) {
+        self.sc2 = sc2
+        self.helper = helper
+    }
+    
     init?(anyUnit: AnyUnit) {
         self.sc2 = anyUnit.sc2
         self.helper = anyUnit.helper
