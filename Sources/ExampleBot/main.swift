@@ -58,6 +58,7 @@ final class CustomBot: BotPlayer {
     var debugCommands = [DebugCommand]()
     var clusters: [(MineralCluster, Position.World)]?
     var expanding: Position.World2D?
+    var ticks = 0
     
     func getClusters(gamestate: GamestateHelper) -> [(MineralCluster, Position.World)] {
         if let clusters = self.clusters {
@@ -74,6 +75,14 @@ final class CustomBot: BotPlayer {
     
     init() {}
     
+    func saveReplay(_ data: Data) {
+        do {
+            try data.write(to: URL(string: "file:///Users/joannisorlandos/Projects/SC2Kit/replay")!)
+        } catch {
+            print(error)
+        }
+    }
+    
     func expand(gamestate: GamestateHelper) {
         // Detect current expansions and ignore those clusters
         let allClusters = getClusters(gamestate: gamestate)
@@ -81,16 +90,34 @@ final class CustomBot: BotPlayer {
         // TODO: Classify on occupation, not unscouted
         var possibleExpansions = allClusters.filter { $0.0.hasUnscoutedMinerals }
         
-        for (_, expansionPosition) in allClusters {
+        for (cluster, expansionPosition) in allClusters {
+            let centerOfMass = cluster.centerOfMass
             debugCommands.append(.draw([
-                .sphere(.init(at: expansionPosition, range: 5, color: .blue))
+                .sphere(.init(at: expansionPosition, range: 5, color: .blue)),
+                .sphere(.init(at: centerOfMass, range: 1, color: .green)),
+                .sphere(.init(at: cluster.closestMinerals(to: centerOfMass).worldPosition, range: 1, color: .red)),
+                .text(DebugString(text: String(cluster.mineralPatches.count), color: .white, position: .world(centerOfMass)))
             ]))
+            
+            debugCommands.append(.draw(cluster.mineralPatches.map { mineral in
+                let distance = mineral.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
+                return .text(DebugString(text: "\(distance)", color: .white, position: .world(mineral.worldPosition)))
+            }))
+            
+            debugCommands.append(.draw(cluster.mineralPatches.map { mineral in
+                let distance = mineral.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
+                return .sphere(.init(at: mineral.worldPosition, range: 0.5, color: .white))
+            }))
         }
         
+        let drones = gamestate.units.only(Drone.self)
+        
+        let isExpanding = drones.contains { $0.orders.contains { $0.ability == .buildHatchery } }
+        
         guard
-            expanding == nil,
+            !isExpanding,
             gamestate.canAfford(Hatchery.self),
-            let drone = gamestate.units.only(Drone.self).randomElement()
+            let drone = drones.randomElement()
         else {
             return
         }
@@ -105,6 +132,7 @@ final class CustomBot: BotPlayer {
         if let (_, position) = possibleExpansions.first {
             drone.buildHatchery(at: position.as2D)
             self.expanding = position.as2D
+            // TODO: What if it cannot?
             print("expanding to \(position.x) \(position.y)")
         }
         
@@ -122,6 +150,11 @@ final class CustomBot: BotPlayer {
     }
     
     func runTick(gamestate: GamestateHelper) {
+        // 22.4 ticks/second, rounded to 25
+//        ticks += 1
+//        if ticks > 25 * 300 {
+//            gamestate.quit()
+//        }
         debugCommands.removeAll(keepingCapacity: true)
         
         var larva = gamestate.units.only(Larva.self)

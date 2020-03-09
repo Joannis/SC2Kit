@@ -1,9 +1,13 @@
+import Foundation
+
 public protocol BotPlayer {
     init()
     var loopsPerTick: Int { get }
+    var saveReplay: Bool { get }
     
     func runTick(gamestate: GamestateHelper)
     func debug() -> [DebugCommand]
+    func saveReplay(_ data: Data)
 }
 
 public struct PlaceBuilding {
@@ -16,12 +20,14 @@ public struct PlaceBuilding {
 
 extension BotPlayer {
     public var loopsPerTick: Int { 1 }
+    public var saveReplay: Bool { true }
 }
 
 public final class GamestateHelper {
     public internal(set) var observation: Observation
     internal var actions = [Action]()
     internal var placedBuildings = [PlaceBuilding]()
+    public private(set) var willQuit = false
     
     init(observation: Observation) {
         self.observation = observation
@@ -29,6 +35,10 @@ public final class GamestateHelper {
     
     public var economy: ObservedPlayer {
         self.observation.player
+    }
+    
+    public func quit() {
+        willQuit = true
     }
     
     public var units: [AnyUnit] {

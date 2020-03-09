@@ -81,6 +81,18 @@ public struct SC2Unit<E: AnyEntity> {
     public var isNeutral: Bool {
         sc2.alliance == .neutral
     }
+    
+    public var orders: [Order] {
+        sc2.orders.map(Order.init)
+    }
+}
+
+public struct Order {
+    let sc2: SC2APIProtocol_UnitOrder
+    
+    public var ability: Ability? {
+        Ability(rawValue: Int32(sc2.abilityID))
+    }
 }
 
 public protocol AnyEntity {}
@@ -167,7 +179,7 @@ public enum UnitType: UInt32 {
     case labMineralField = 665
     case labMineralField750 = 666
     case mineralField = 341
-    case mineralField750 = 383
+    case mineralField750 = 483
     case protossVespeneGeyser = 608
     case purifierMineralField = 884
     case purifierMineralField750 = 885

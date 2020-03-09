@@ -39,16 +39,19 @@ public struct DebugString: ExpressibleByStringLiteral {
     public var text: String
     public var color: DebugColor
     public var position: DebugPosition
+    public var size: UInt32
     
-    public init(text: String, color: DebugColor = .white, position: DebugPosition) {
+    public init(text: String, color: DebugColor = .white, size: UInt32 = 30, position: DebugPosition) {
         self.text = text
         self.color = color
+        self.size = size
         self.position = position
     }
     
     public init(stringLiteral value: String) {
         self.text = value
         self.color = .white
+        self.size = 1
         self.position = .screen(x: 0, y: 0)
     }
     
@@ -56,6 +59,7 @@ public struct DebugString: ExpressibleByStringLiteral {
         var text = SC2APIProtocol_DebugText()
         text.text = self.text
         text.color = color.sc2
+        text.size = size
         
         switch position {
         case .screen(let x, let y):

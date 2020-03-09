@@ -29,6 +29,7 @@ public final class SC2Game {
     public func startGame(
         onMap map: SC2Map,
         realtime: Bool,
+        saveReplay: Bool = true,
         players: [SC2Player]
     ) -> EventLoopFuture<Void> {
         if players.isEmpty {
@@ -122,7 +123,7 @@ public final class SC2Bot {
         }
     }
     
-    public func tick(placedBuildings: [PlaceBuilding]) -> EventLoopFuture<[PlaceBuilding]> {
+    func tick(placedBuildings: [PlaceBuilding]) -> EventLoopFuture<[PlaceBuilding]> {
         return observe().flatMap { observation in
             self.gamestate.observation = observation
             self.gamestate.actions.removeAll(keepingCapacity: true)
@@ -137,13 +138,6 @@ public final class SC2Bot {
                 self.sendActions(self.gamestate.actions)
             }.map {
                 self.gamestate.placedBuildings
-//                let resolvedPlacements = self.gamestate.placedBuildings.map { building -> EventLoopFuture<PlaceBuilding?> in
-//                    self.canPlaceBuilding(building).map { $0 ? building : nil }
-//                }
-                
-//                return EventLoopFuture.whenAllSucceed(resolvedPlacements, on: self.client.eventLoop).map {
-//                    $0.compactMap { $0 }
-//                }
             }
         }
     }
@@ -186,10 +180,27 @@ public final class SC2Bot {
             fatalError("Cannot start stepping a bot more than once")
         }
         
+        
         stepping = true
         
         func nextTick(placedBuildings: [PlaceBuilding]) -> EventLoopFuture<Void> {
-            self.tick(placedBuildings: placedBuildings).flatMap { newPlacedBuildings in
+            if self.gamestate.willQuit {
+                var request = SC2APIProtocol_Request()
+                request.quit = .init()
+                return client.send(&request, outputKeyPath: \.quit).flatMap { _ in
+                    if !self.bot.saveReplay {
+                        return self.client.eventLoop.makeSucceededFuture(())
+                    }
+                    
+                    var request = SC2APIProtocol_Request()
+                    request.saveReplay = .init()
+                    return self.client.send(&request, outputKeyPath: \.saveReplay).map { replay in
+                        self.bot.saveReplay(replay.data)
+                    }
+                }
+            }
+            
+            return self.tick(placedBuildings: placedBuildings).flatMap { newPlacedBuildings in
                 if realtime {
                     return nextTick(placedBuildings: newPlacedBuildings)
                 } else {
@@ -354,9 +365,7 @@ public final class SC2Client {
     func sendActions(_ actions: [Action]) -> EventLoopFuture<Void> {
         var request = SC2APIProtocol_Request()
         request.action.actions = actions.map { $0.sc2 }
-        return send(&request, outputKeyPath: \.action).map { response in
-            print(response)
-        }
+        return send(&request, outputKeyPath: \.action).map { _ in }
     }
 }
 

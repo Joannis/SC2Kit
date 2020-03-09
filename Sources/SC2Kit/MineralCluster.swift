@@ -50,7 +50,7 @@ public struct MineralCluster {
         mineralPatches.contains { $0.mineralContents == 0 }
     }
     
-    public var approximateExpansionLocation: Position.World {
+    public var centerOfMass: Position.World {
         var cumulativeX: Float = 0
         var cumulativeY: Float = 0
         var cumulativeZ: Float = 0
@@ -61,11 +61,14 @@ public struct MineralCluster {
             cumulativeZ += minerals.worldPosition.z
         }
         
-        var averagePosition = Position.World2D(
+        return Position.World(
             x: cumulativeX / Float(mineralPatches.count),
-            y: cumulativeY / Float(mineralPatches.count)
+            y: cumulativeY / Float(mineralPatches.count),
+            z: cumulativeZ / Float(mineralPatches.count)
         )
-        
+    }
+    
+    public func closestMinerals(to position: Position.World) -> SC2Unit<Minerals> {
         var mineralIterator = mineralPatches.makeIterator()
         guard var closestMineral = mineralIterator.next() else {
             fatalError("Invalid empty mineral cluster")
@@ -75,28 +78,35 @@ public struct MineralCluster {
             let nextMineralPosition = nextMineral.worldPosition.as2D
             let closestMineralPosition = closestMineral.worldPosition.as2D
             
-            if averagePosition.distanceXY(to: nextMineralPosition) < averagePosition.distanceXY(to: closestMineralPosition) {
+            if position.as2D.distanceXY(to: nextMineralPosition) < position.as2D.distanceXY(to: closestMineralPosition) {
                 closestMineral = nextMineral
             }
         }
+        
+        return closestMineral
+    }
+    
+    public var approximateExpansionLocation: Position.World {
+        var centerOfMass = self.centerOfMass
+        let closestMineral = self.closestMinerals(to: centerOfMass)
         
         // Offset current center of mass by 4.5 away from the mineral line
         // 2 distance from the mineral line to mark the edge of a base
         // 2 to put it on the center of a tile, so the base is centered on the area
         // This puts an approximate center for standard a 5x5 base
-        if closestMineral.worldPosition.x > averagePosition.x {
-            averagePosition.x -= 4
+        if closestMineral.worldPosition.x > centerOfMass.x {
+            centerOfMass.x -= 4
         } else {
-            averagePosition.x += 4
+            centerOfMass.x += 4
         }
 
-        if closestMineral.worldPosition.y > averagePosition.y {
-            averagePosition.y += 4
+        if closestMineral.worldPosition.y > centerOfMass.y {
+            centerOfMass.y -= 4
         } else {
-            averagePosition.y -= 4
+            centerOfMass.y += 4
         }
         
-        return Position.World(x: averagePosition.x, y: averagePosition.y, z: cumulativeZ / Float(mineralPatches.count))
+        return centerOfMass
     }
     
     public var visibility: AreaVisibility {
