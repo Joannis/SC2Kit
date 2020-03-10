@@ -23,14 +23,42 @@ extension BotPlayer {
     public var saveReplay: Bool { true }
 }
 
+public struct PlacementGrid {
+    let sc2: SC2APIProtocol_ImageData
+    
+    init(sc2: SC2APIProtocol_ImageData) {
+        self.sc2 = sc2
+        
+        if sc2.bitsPerPixel != 1 {
+            fatalError("sc2.startRaw.placementGrid.bitsPerPixel != 1")
+        }
+    }
+    
+    public subscript(x: Int, y: Int) -> Bool {
+        let bit = (x + (y * Int(sc2.size.x)))
+        let byte = sc2.data[(bit / 8)] >> (7 - (bit % 8))
+        return (byte & 0b00000001) != 0
+    }
+}
+
+public struct GameInfo {
+    let sc2: SC2APIProtocol_ResponseGameInfo
+    
+    public var placementGrid: PlacementGrid {
+        PlacementGrid(sc2: sc2.startRaw.placementGrid)
+    }
+}
+
 public final class GamestateHelper {
     public internal(set) var observation: Observation
     internal var actions = [Action]()
     internal var placedBuildings = [PlaceBuilding]()
+    public let gameInfo: GameInfo
     public private(set) var willQuit = false
     
-    init(observation: Observation) {
+    init(observation: Observation, gameInfo: GameInfo) {
         self.observation = observation
+        self.gameInfo = gameInfo
     }
     
     public var economy: ObservedPlayer {
@@ -178,6 +206,10 @@ public struct Position {
         
         public func distance(inSpace space: KeyPath<Self, Float>, to coordinate: Self) -> Float {
             abs(coordinate[keyPath: space] - self[keyPath: space])
+        }
+        
+        public func difference(inSpace space: KeyPath<Self, Float>, to coordinate: Self) -> Float {
+            coordinate[keyPath: space] - self[keyPath: space]
         }
         
         public var x: Float {

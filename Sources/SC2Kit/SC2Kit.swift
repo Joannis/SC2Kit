@@ -60,12 +60,19 @@ public final class SC2Game {
                 let player = self.players[i]
                 
                 return player.client.joinPlayer(player.setup).flatMap { config in
-                    if case .participant(_, .bot(let botType)) = player.setup {
-                        let bot = SC2Bot(configuration: config, bot: botType.init(), client: player.client)
-                        self.bots.append(bot)
+                    return player.client.getGameInfo().flatMap { gameInfo in
+                        if case .participant(_, .bot(let botType)) = player.setup {
+                            let bot = SC2Bot(
+                                configuration: config,
+                                bot: botType.init(),
+                                client: player.client,
+                                gameInfo: gameInfo
+                            )
+                            self.bots.append(bot)
+                        }
+                        
+                        return joinPlayer(i + 1)
                     }
-                    
-                    return joinPlayer(i + 1)
                 }
             }
             
@@ -99,9 +106,13 @@ public final class SC2Bot {
     private var stepping = false
     fileprivate let bot: BotPlayer
     private let client: SC2Client
-    private let gamestate = GamestateHelper(observation: Observation(response: .init()))
+    private let gamestate: GamestateHelper
     
-    fileprivate init(configuration: PlayerConfiguration, bot: BotPlayer, client: SC2Client) {
+    fileprivate init(configuration: PlayerConfiguration, bot: BotPlayer, client: SC2Client, gameInfo: GameInfo) {
+        self.gamestate = GamestateHelper(
+            observation: .init(response: .init()),
+            gameInfo: gameInfo
+        )
         self.configuration = configuration
         self.bot = bot
         self.client = client
@@ -340,8 +351,16 @@ public final class SC2Client {
         }
     }
     
+    func getGameInfo() -> EventLoopFuture<GameInfo> {
+        var request = SC2APIProtocol_Request()
+        request.gameInfo = .init()
+        
+        return self.send(&request, outputKeyPath: \.gameInfo).map(GameInfo.init)
+    }
+    
     func joinPlayer(_ player: SC2Player) -> EventLoopFuture<PlayerConfiguration> {
         assert(status == .initGame || status == .launched)
+        var request = SC2APIProtocol_Request()
         var join = SC2APIProtocol_RequestJoinGame()
         
         join.options.raw = true
@@ -350,7 +369,6 @@ public final class SC2Client {
         join.options.showBurrowedShadows = true
         join.participation = player.participation
         
-        var request = SC2APIProtocol_Request()
         request.joinGame = join
         
         return self.send(&request, outputKeyPath: \.joinGame).flatMapThrowing { response in

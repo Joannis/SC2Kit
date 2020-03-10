@@ -55,18 +55,24 @@ extension Array where Element == SC2Unit<Larva> {
 }
 
 final class CustomBot: BotPlayer {
+    func saveReplay(_ data: Data) {}
+    
     var debugCommands = [DebugCommand]()
     var clusters: [(MineralCluster, Position.World)]?
     var expanding: Position.World2D?
-    var ticks = 0
+    var expansionCount = 1
     
     func getClusters(gamestate: GamestateHelper) -> [(MineralCluster, Position.World)] {
         if let clusters = self.clusters {
             return clusters
         }
         
-        let mineralClusters = gamestate.units.resources.formClusters().map { cluster in
-            (cluster, cluster.approximateExpansionLocation)
+        let mineralClusters = gamestate.units.resources.formClusters().compactMap { cluster -> (MineralCluster, Position.World)? in
+//            guard let location = cluster.getExpansionLocation(in: gamestate) else {
+//                return nil
+//            }
+            
+            return (cluster, cluster.approximateExpansionLocation)
         }
         
         self.clusters = mineralClusters
@@ -75,31 +81,61 @@ final class CustomBot: BotPlayer {
     
     init() {}
     
-    func saveReplay(_ data: Data) {
-        do {
-            try data.write(to: URL(string: "file:///Users/joannisorlandos/Projects/SC2Kit/replay")!)
-        } catch {
-            print(error)
+    func setupDebug(gamestate: GamestateHelper) {
+        if !debugCommands.isEmpty {
+            return
         }
+        
+        #if DEBUG
+        nextCluster: for (cluster, expansionPosition) in getClusters(gamestate: gamestate) {
+            let centerOfMass = cluster.centerOfMass
+            debugCommands.append(.draw([
+                .sphere(.init(at: cluster.approximateExpansionLocation, range: 3, color: .red)),
+                .sphere(.init(at: expansionPosition, range: 5, color: .red)),
+                .sphere(.init(at: centerOfMass, range: 1, color: .green)),
+                .sphere(.init(at: cluster.closestResource(to: centerOfMass).worldPosition, range: 1, color: .red)),
+                .text(DebugString(text: String(cluster.resources.count), color: .white, position: .world(centerOfMass)))
+            ]))
+            
+            debugCommands.append(.draw(cluster.resources.map { resource in
+                let distance = resource.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
+                return .text(DebugString(text: "\(distance)", color: .white, position: .world(resource.worldPosition)))
+            }))
+            
+            debugCommands.append(.draw(cluster.resources.map { resource in
+                let distance = resource.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
+                return .sphere(.init(at: resource.worldPosition, range: 0.5, color: .white))
+            }))
+        }
+        #endif
     }
     
     func expand(gamestate: GamestateHelper) {
         // Detect current expansions and ignore those clusters
         let allClusters = getClusters(gamestate: gamestate)
+        let currentExpansions = gamestate.units.only(Hatchery.self)
         
-        // TODO: Classify on occupation, not unscouted
-        var possibleExpansions = allClusters.filter { $0.0.hasUnscoutedMinerals }
-        
-        let drones = gamestate.units.only(Drone.self)
-        
-        let isExpanding = drones.contains { $0.orders.contains { $0.ability == .buildHatchery } }
+        if currentExpansions.count == expansionCount {
+            expansionCount += 1
+            self.expanding = nil
+        }
         
         guard
-            !isExpanding,
+            expanding == nil,
             gamestate.canAfford(Hatchery.self),
-            let drone = drones.randomElement()
+            let drone = gamestate.units.only(Drone.self).randomElement()
         else {
             return
+        }
+        
+        var possibleExpansions = allClusters.filter { cluster in
+            for expansion in currentExpansions {
+                if expansion.worldPosition.as2D.distanceXY(to: cluster.1.as2D) <= 15 {
+                    return false
+                }
+            }
+            
+            return true
         }
         
         possibleExpansions.sort { lhs, rhs in
@@ -112,7 +148,6 @@ final class CustomBot: BotPlayer {
         if let (_, position) = possibleExpansions.first {
             drone.buildHatchery(at: position.as2D)
             self.expanding = position.as2D
-            // TODO: What if it cannot, don't endlessly fail, give up?
             print("expanding to \(position.x) \(position.y)")
         }
         
@@ -130,12 +165,7 @@ final class CustomBot: BotPlayer {
     }
     
     func runTick(gamestate: GamestateHelper) {
-        // 22.4 ticks/second, rounded to 25
-//        ticks += 1
-//        if ticks > 25 * 300 {
-//            gamestate.quit()
-//        }
-        
+        setupDebug(gamestate: gamestate)
         var larva = gamestate.units.only(Larva.self)
         let eggs = gamestate.units.only(Egg.self)
         let spawningOverlords = eggs.spawning(into: .overlord).count
