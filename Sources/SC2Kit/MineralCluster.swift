@@ -88,6 +88,14 @@ public struct MineralCluster {
     
     public var approximateExpansionLocation: Position.World {
         var centerOfMass = self.centerOfMass
+        
+        // Offset the center of mass further
+        let closestResource = self.closestResource(to: centerOfMass)
+        let xDiff = centerOfMass.as2D.difference(inSpace: \.x, to: closestResource.worldPosition.as2D)
+        let yDiff = centerOfMass.as2D.difference(inSpace: \.y, to: closestResource.worldPosition.as2D)
+        centerOfMass.x += xDiff * 3
+        centerOfMass.y += yDiff * 3
+        
         let side = openSide(nearExpansion: centerOfMass)
         print(centerOfMass.x, centerOfMass.y, side)
         
@@ -120,48 +128,41 @@ public struct MineralCluster {
     }
     
     private func openSide(nearExpansion expansion: Position.World) -> Side {
-        var averageRelativeX: Float = 0
-        var averageRelativeY: Float = 0
+        var belowCount = 0
+        var rightCount = 0
         
         for resource in resources {
-            averageRelativeX += expansion.as2D.distance(inSpace: \.x, to: resource.worldPosition.as2D)
-            averageRelativeY += expansion.as2D.distance(inSpace: \.y, to: resource.worldPosition.as2D)
+            rightCount += resource.worldPosition.x > expansion.x ? 1 : -1
+            belowCount += resource.worldPosition.y > expansion.y ? 1 : -1
         }
         
-        averageRelativeX /= Float(resources.count)
-        averageRelativeY /= Float(resources.count)
+        let boundary = resources.count / 2
         
-//        if abs(averageRelativeX) > 1 {
-//            if abs(averageRelativeY) > 1 {
-//                // Y is not important
-//                return averageRelativeX < 0 ? .right : .left
-//            }
-        
-        print(averageRelativeX, averageRelativeY)
-            
-            if averageRelativeY > 0 {
-                // Top
-                if averageRelativeX > 0 {
-                    // Right
-                    return .topRight
-                } else {
-                    // Left
-                    return .topLeft
-                }
+        if rightCount > boundary {
+            if belowCount > boundary {
+                return .bottomRight
+            } else if -belowCount > boundary {
+                return .topRight
             } else {
-                // Bottom
-                if averageRelativeX > 0 {
-                    // Right
-                    return .bottomRight
-                } else {
-                    // Left
-                    return .bottomLeft
-                }
+                return .right
             }
-//        } else {
-//            // X is not important
-//            return averageRelativeY < 0 ? .bottom : .top
-//        }
+        } else if -rightCount > boundary {
+            if belowCount > boundary {
+                return .bottomLeft
+            } else if -belowCount > boundary {
+                return .topLeft
+            } else {
+                return .left
+            }
+        } else {
+            if belowCount > boundary {
+                return .bottom
+            } else if -belowCount > boundary {
+                return .top
+            } else {
+                fatalError("Unknown ideal location at \(expansion.x) \(expansion.y)")
+            }
+        }
     }
     
     func averageDistanceToResoures(from position: Position.World) -> Float {
@@ -173,139 +174,6 @@ public struct MineralCluster {
         
         return distance / Float(resources.count)
     }
-    
-//    public func getExpansionLocation(in gamestate: GamestateHelper) -> Position.World? {
-//        var centerOfMass = self.centerOfMass
-//        // Offset current center of mass by 4.5 away from the mineral line
-//        // 2 distance from the mineral line to mark the edge of a base
-//        // 2 to put it on the center of a tile, so the base is centered on the area
-//        // This puts an approximate center for standard a 5x5 base
-//        let offset: Float = 4.5
-//        let side = openSide(nearExpansion: centerOfMass)
-//
-//        switch side {
-//        case .top:
-//            centerOfMass.y -= offset
-//        case .bottom:
-//            centerOfMass.y += offset
-//        case .left:
-//            centerOfMass.x -= offset
-//        case .right:
-//            centerOfMass.x += offset
-//        }
-//
-//        var x = Int(centerOfMass.x)
-//        var y = Int(centerOfMass.y)
-//
-//        let placement = gamestate.gameInfo.placementGrid
-//
-//        func correctX() -> Bool {
-//            // Y should be fine, now find the X
-//            if !placement[x, y] {
-//                let canMoveLeft = placement[x - 3, y]
-//                let canMoveRight = placement[x + 3, y]
-//
-//                switch (canMoveLeft, canMoveRight) {
-//                case (false, false):
-//                    return false
-//                case (true, false):
-//                    x -= 3
-//                case (false, true):
-//                    x += 3
-//                case (true, true):
-//                    var left = centerOfMass
-//                    left.x -= 3
-//                    let leftEffectiveRange = averageDistanceToResoures(from: left)
-//
-//                    var right = centerOfMass
-//                    right.x += 3
-//                    let rightEffectiveRange = averageDistanceToResoures(from: right)
-//
-//                    if rightEffectiveRange < leftEffectiveRange {
-//                        x -= 3
-//                    } else {
-//                        x += 3
-//                    }
-//                }
-//
-//                if !placement[x, y] {
-//                    return false
-//                }
-//            }
-//
-//            if !placement[x + 1, y] {
-//                x -= 2
-//            } else if !placement[x + 2, y] {
-//                x -= 1
-//            } else if !placement[x - 1, y] {
-//                x += 1
-//            } else if !placement[x - 2, y] {
-//                x += 2
-//            }
-//
-//            return placement[x - 2, y] && placement[x + 2, y]
-//        }
-//
-//        func correctY() -> Bool {
-//            // X should be fine, now find the Y
-//            if !placement[x, y] {
-//                let canMoveTop = placement[x, y - 3]
-//                let canMoveBottom = placement[x, y + 3]
-//
-//                switch (canMoveTop, canMoveBottom) {
-//                case (false, false):
-//                    return false
-//                case (true, false):
-//                    y -= 3
-//                case (false, true):
-//                    y += 3
-//                case (true, true):
-//                    var top = centerOfMass
-//                    top.y -= 3
-//                    let topEffectiveRange = averageDistanceToResoures(from: top)
-//
-//                    var bottom = centerOfMass
-//                    bottom.y += 3
-//                    let bottomEffectiveRange = averageDistanceToResoures(from: bottom)
-//
-//                    if topEffectiveRange < bottomEffectiveRange {
-//                        y -= 3
-//                    } else {
-//                        y += 3
-//                    }
-//                }
-//
-//                if !placement[x, y] {
-//                    return false
-//                }
-//            }
-//
-//            if !placement[x, y + 1] {
-//                y -= 2
-//            } else if !placement[x, y + 2] {
-//                y -= 1
-//            } else if !placement[x, y - 1] {
-//                y += 1
-//            } else if !placement[x, y - 2] {
-//                y += 2
-//            }
-//
-//            return placement[x, y - 2] && placement[x, y + 2]
-//        }
-//
-//        switch side {
-//        case .top, .bottom:
-//            guard correctX(), correctY() else {
-//                return nil
-//            }
-//        case .left, .right:
-//            guard correctY(), correctX() else {
-//                return nil
-//            }
-//        }
-//
-//        return Position.World(x: Float(x), y: Float(y), z: centerOfMass.z)
-//    }
     
     public var visibility: AreaVisibility {
         var visibleCount = 0
