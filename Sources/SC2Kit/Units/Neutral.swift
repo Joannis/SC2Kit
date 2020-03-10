@@ -37,8 +37,16 @@ extension Array where Element == SC2Unit<Resources> {
 }
 
 extension SC2Unit where E == Resources {
+    public var isMinerals: Bool {
+        UnitType(rawValue: sc2.unitType)?.isMinerals == true
+    }
+    
+    public var isVespeneGeyser: Bool {
+        UnitType(rawValue: sc2.unitType)?.isVespeneGeyser == true
+    }
+    
     public var minerals: SC2Unit<Minerals>? {
-        if UnitType(rawValue: sc2.unitType)?.isMinerals == true {
+        if isMinerals {
             return SC2Unit<Minerals>(sc2: sc2, helper: helper)
         }
         
@@ -46,7 +54,7 @@ extension SC2Unit where E == Resources {
     }
     
     public var vespeneGeyser: SC2Unit<VespeneGeyser>? {
-        if UnitType(rawValue: sc2.unitType)?.isVespeneGeyser == true {
+        if isVespeneGeyser {
             return SC2Unit<VespeneGeyser>(sc2: sc2, helper: helper)
         }
         

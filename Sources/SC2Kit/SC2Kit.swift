@@ -257,6 +257,7 @@ public final class SC2Client {
             let data = data.getData(at: 0, length: data.readableBytes)!
             let response = try SC2APIProtocol_Response(serializedData: data)
             promises[response.id]?.succeed(response)
+            promises[response.id] = nil
         } catch {
             print(error)
         }

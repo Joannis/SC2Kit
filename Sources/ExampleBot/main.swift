@@ -88,23 +88,14 @@ final class CustomBot: BotPlayer {
         
         #if DEBUG
         nextCluster: for (cluster, expansionPosition) in getClusters(gamestate: gamestate) {
-            let centerOfMass = cluster.centerOfMass
             debugCommands.append(.draw([
                 .sphere(.init(at: cluster.approximateExpansionLocation, range: 3, color: .red)),
                 .sphere(.init(at: expansionPosition, range: 5, color: .red)),
-                .sphere(.init(at: centerOfMass, range: 1, color: .green)),
-                .sphere(.init(at: cluster.closestResource(to: centerOfMass).worldPosition, range: 1, color: .red)),
-                .text(DebugString(text: String(cluster.resources.count), color: .white, position: .world(centerOfMass)))
             ]))
             
             debugCommands.append(.draw(cluster.resources.map { resource in
-                let distance = resource.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
+                let distance = resource.worldPosition.as2D.distanceXY(to: expansionPosition.as2D)
                 return .text(DebugString(text: "\(distance)", color: .white, position: .world(resource.worldPosition)))
-            }))
-            
-            debugCommands.append(.draw(cluster.resources.map { resource in
-                let distance = resource.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
-                return .sphere(.init(at: resource.worldPosition, range: 0.5, color: .white))
             }))
         }
         #endif

@@ -86,83 +86,74 @@ public struct MineralCluster {
         )
     }
     
-    public var approximateExpansionLocation: Position.World {
-        var centerOfMass = self.centerOfMass
+    public func furthestResources() -> (SC2Unit<Resources>, SC2Unit<Resources>)? {
+        assert(resources.count >= 2)
+        var furthestDistance: Float = 0
+        var result: (SC2Unit<Resources>, SC2Unit<Resources>)?
         
-        // Offset the center of mass further
-        let closestResource = self.closestResource(to: centerOfMass)
-        let xDiff = centerOfMass.as2D.difference(inSpace: \.x, to: closestResource.worldPosition.as2D)
-        let yDiff = centerOfMass.as2D.difference(inSpace: \.y, to: closestResource.worldPosition.as2D)
-        centerOfMass.x += xDiff * 3
-        centerOfMass.y += yDiff * 3
-        
-        let side = openSide(nearExpansion: centerOfMass)
-        print(centerOfMass.x, centerOfMass.y, side)
-        
-        
-        // Offset current center of mass by 4.5 away from the mineral line
-        // 2 distance from the mineral line to mark the edge of a base
-        // 2 to put it on the center of a tile, so the base is centered on the area
-        // This puts an approximate center for standard a 5x5 base
-        let offset: Float = 4.5
-        
-        switch side {
-        case .left, .topLeft, .bottomLeft:
-            centerOfMass.x -= offset
-        case .right, .topRight, .bottomRight:
-            centerOfMass.x += offset
-        default:
-            break
+        for l in 0..<resources.count {
+            for r in l..<resources.count {
+                let lhs = resources[l]
+                let rhs = resources[r]
+                let distance = lhs.worldPosition.as2D.distanceXY(to: rhs.worldPosition.as2D)
+                
+                if distance >= furthestDistance {
+                    result = (lhs, rhs)
+                    furthestDistance = distance
+                }
+            }
         }
         
-        switch side {
-        case .top, .topLeft, .topRight:
-            centerOfMass.y -= offset
-        case .bottom, .bottomLeft, .bottomRight:
-            centerOfMass.y += offset
-        default:
-            break
+        return result
+    }
+    
+    public var approximateExpansionLocation: Position.World {
+        var centerOfMass = self.centerOfMass
+        guard let (lhs, rhs) = furthestResources() else {
+            return centerOfMass
+        }
+        
+        let minDistance: Float = 6.2
+        let maxDistance = (lhs.worldPosition.as2D.distanceXY(to: rhs.worldPosition.as2D) / 2) + 1
+        
+        func balance(offsetMultiplier: Float, relativeTo position: Position.World2D) {
+            let diffX = position.difference(inSpace: \.x, to: centerOfMass.as2D)
+            let diffY = position.difference(inSpace: \.y, to: centerOfMass.as2D)
+            
+            // Substract current offset
+            centerOfMass.x -= diffX
+            centerOfMass.y -= diffY
+            
+            // Add the offset multiplied by the needed difference, achieving the preferred position
+            centerOfMass.x += diffX * offsetMultiplier
+            centerOfMass.y += diffY * offsetMultiplier
+        }
+        
+        for _ in 0..<10 {
+            var neededBalance = false
+            
+            for resource in resources {
+                let maxDistance: Float = resource.minerals == nil ? maxDistance : 7.5
+                
+                let distance = resource.worldPosition.as2D.distanceXY(to: centerOfMass.as2D)
+                if distance < minDistance {
+                    neededBalance = true
+                    // 4 (distance needed) / 2 (current distance) = 2 (multiplier of offset)
+                    // 4 (distance needed) / 8 (current distance) = 0.5 (multiplier of offset)
+                    let offsetMultiplier = minDistance / distance
+                    balance(offsetMultiplier: offsetMultiplier, relativeTo: resource.worldPosition.as2D)
+                } else if distance > maxDistance {
+                    let offsetMultiplier = maxDistance / distance
+                    balance(offsetMultiplier: offsetMultiplier, relativeTo: resource.worldPosition.as2D)
+                }
+            }
+            
+            if !neededBalance {
+                return centerOfMass
+            }
         }
         
         return centerOfMass
-    }
-    
-    private func openSide(nearExpansion expansion: Position.World) -> Side {
-        var belowCount = 0
-        var rightCount = 0
-        
-        for resource in resources {
-            rightCount += resource.worldPosition.x > expansion.x ? 1 : -1
-            belowCount += resource.worldPosition.y > expansion.y ? 1 : -1
-        }
-        
-        let boundary = resources.count / 2
-        
-        if rightCount > boundary {
-            if belowCount > boundary {
-                return .bottomRight
-            } else if -belowCount > boundary {
-                return .topRight
-            } else {
-                return .right
-            }
-        } else if -rightCount > boundary {
-            if belowCount > boundary {
-                return .bottomLeft
-            } else if -belowCount > boundary {
-                return .topLeft
-            } else {
-                return .left
-            }
-        } else {
-            if belowCount > boundary {
-                return .bottom
-            } else if -belowCount > boundary {
-                return .top
-            } else {
-                fatalError("Unknown ideal location at \(expansion.x) \(expansion.y)")
-            }
-        }
     }
     
     func averageDistanceToResoures(from position: Position.World) -> Float {
