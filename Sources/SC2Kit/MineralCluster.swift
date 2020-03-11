@@ -51,21 +51,7 @@ public struct MineralCluster {
     }
     
     public func closestResource(to position: Position.World) -> SC2Unit<Resources> {
-        var resourceIterator = resources.makeIterator()
-        guard var closestResource = resourceIterator.next() else {
-            fatalError("Invalid empty mineral cluster")
-        }
-        
-        while let nextResource = resourceIterator.next() {
-            let nextResourcePosition = nextResource.worldPosition.as2D
-            let closestResourcePosition = closestResource.worldPosition.as2D
-            
-            if position.as2D.distanceXY(to: nextResourcePosition) < position.as2D.distanceXY(to: closestResourcePosition) {
-                closestResource = nextResource
-            }
-        }
-        
-        return closestResource
+        return resources.nearestUnit(to: position.as2D)!
     }
     
     public var centerOfMass: Position.World {

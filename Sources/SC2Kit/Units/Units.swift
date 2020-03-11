@@ -17,11 +17,19 @@ public struct AnyUnit {
     public var isNeutral: Bool {
         sc2.alliance == .neutral
     }
+    
+    public var isOwned: Bool {
+        sc2.alliance == .self_
+    }
 }
 
 extension Array where Element == AnyUnit {
     public var friendly: [AnyUnit] {
         self.filter { $0.isFriendly }
+    }
+    
+    public var owned: [AnyUnit] {
+        self.filter { $0.isOwned }
     }
     
     public var neutral: [AnyUnit] {
@@ -52,6 +60,10 @@ public struct SC2Unit<E: AnyEntity> {
     init?(anyUnit: AnyUnit) {
         self.sc2 = anyUnit.sc2
         self.helper = anyUnit.helper
+    }
+    
+    public var any: AnyUnit {
+        AnyUnit(sc2: sc2, helper: helper)
     }
     
     public var isVisible: Bool {
@@ -90,8 +102,39 @@ public struct SC2Unit<E: AnyEntity> {
         sc2.alliance == .neutral
     }
     
+    public var isOwned: Bool {
+        sc2.alliance == .self_
+    }
+    
     public var orders: [Order] {
         sc2.orders.map(Order.init)
+    }
+    
+    public func findNearest<E: AnyEntity>(in pool: [SC2Unit<E>]) -> SC2Unit<E>? {
+        pool.nearestUnit(to: self.worldPosition.as2D)
+    }
+}
+
+extension Array {
+    public func nearestUnit<E: AnyEntity>(to position: Position.World2D) -> Element? where Element == SC2Unit<E> {
+        if isEmpty {
+            return nil
+        }
+        
+        var unit = self[0]
+        var distance = unit.worldPosition.as2D.distanceXY(to: position)
+        
+        for i in 1..<self.count {
+            let otherUnit = self[i]
+            let otherDistance = unit.worldPosition.as2D.distanceXY(to: position)
+            
+            if otherDistance < distance {
+                unit = otherUnit
+                distance = otherDistance
+            }
+        }
+        
+        return unit
     }
 }
 

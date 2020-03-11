@@ -1,5 +1,5 @@
 import XCTest
-@testable import SC2Kit
+//@testable import SC2Kit
 
 final class SC2KitTests: XCTestCase {
     func testExample() {

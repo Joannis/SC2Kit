@@ -19,6 +19,10 @@ public enum Drone: ZergLarvaUnit {
 }
 
 extension SC2Unit where E == Drone {
+    public func harvest(_ unit: SC2Unit<Minerals>) {
+        helper.actions.append(.commandUnits([self.tag], do: .droneGather, on: .position(unit.worldPosition.as2D), queued: false))
+    }
+    
     public func buildHatchery(at position: Position.World2D) {
         _ = helper.train(Hatchery.self) {
             let placement = PlaceBuilding(
@@ -27,7 +31,7 @@ extension SC2Unit where E == Drone {
                 ignoreResourceRequirements: true,
                 position: position
             ) { gamestate in
-                gamestate.actions.append(.commandUnits([self.tag], .buildHatchery, .position(position)))
+                gamestate.actions.append(.commandUnits([self.tag], do: .buildHatchery, on: .position(position), queued: false))
             }
             
             helper.placedBuildings.append(placement)
@@ -59,7 +63,7 @@ extension SC2Unit where E == Larva {
     
     private func spawn<Z: ZergLarvaUnit>(into entity: Z.Type) -> Bool {
         return helper.train(Z.self) {
-            helper.actions.append(.commandUnits([self.tag], Z.trainAbility, .none))
+            helper.actions.append(.commandUnits([self.tag], do: Z.trainAbility, on: .none, queued: false))
         }
     }
 }
@@ -109,4 +113,21 @@ extension SC2Unit where E == Hatchery {
     public var harvesterSurplus: Int {
         assignedHarvesters - idealHarvesters
     }
+
+//    FIXME: This code triggers notSupported, probably the wrong ability code
+//    public func rallyWorkers(to target: Target) {
+//        helper.actions.append(.commandUnits([self.tag], .rallyWorkers, target))
+//    }
+//
+//    public func rallyWorkers(to resource: SC2Unit<Resources>) {
+//        rallyWorkers(to: .unit(resource.tag))
+//    }
+//
+//    public func rallyWorkers(to minerals: SC2Unit<Minerals>) {
+//        rallyWorkers(to: .unit(minerals.tag))
+//    }
+//
+//    public func rallyWorkers(to vespeneGeyser: SC2Unit<VespeneGeyser>) {
+//        rallyWorkers(to: .unit(vespeneGeyser.tag))
+//    }
 }

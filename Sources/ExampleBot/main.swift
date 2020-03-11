@@ -56,11 +56,11 @@ extension Array where Element == SC2Unit<Larva> {
 
 final class CustomBot: BotPlayer {
     func saveReplay(_ data: Data) {}
-    
     var debugCommands = [DebugCommand]()
     var clusters: [(MineralCluster, Position.World)]?
     var expanding: Position.World2D?
     var expansionCount = 1
+    var tick: UInt = 0
     
     func getClusters(gamestate: GamestateHelper) -> [(MineralCluster, Position.World)] {
         if let clusters = self.clusters {
@@ -77,6 +77,21 @@ final class CustomBot: BotPlayer {
         
         self.clusters = mineralClusters
         return mineralClusters
+    }
+    
+    func getClustersWithExpansion(gamestate: GamestateHelper) -> [(MineralCluster, Position.World, SC2Unit<Hatchery>)] {
+        let hatcheries = gamestate.units.owned.only(Hatchery.self)
+        return getClusters(gamestate: gamestate).compactMap { cluster, position in
+            for hatchery in hatcheries {
+                let isNearCluster = hatchery.worldPosition.as2D.distanceXY(to: position.as2D) <= 15
+                
+                if isNearCluster {
+                    return (cluster, position, hatchery)
+                }
+            }
+            
+            return nil
+        }
     }
     
     init() {}
@@ -101,10 +116,9 @@ final class CustomBot: BotPlayer {
         #endif
     }
     
-    func expand(gamestate: GamestateHelper) {
+    func expand(usingDrones drones: inout [SC2Unit<Drone>], nearExpansions currentExpansions: [SC2Unit<Hatchery>], gamestate: GamestateHelper) {
         // Detect current expansions and ignore those clusters
         let allClusters = getClusters(gamestate: gamestate)
-        let currentExpansions = gamestate.units.only(Hatchery.self)
         
         if currentExpansions.count == expansionCount {
             expansionCount += 1
@@ -114,35 +128,41 @@ final class CustomBot: BotPlayer {
         guard
             expanding == nil,
             gamestate.canAfford(Hatchery.self),
-            let drone = gamestate.units.only(Drone.self).randomElement()
+            !drones.isEmpty
         else {
             return
         }
         
-        var possibleExpansions = allClusters.filter { cluster in
+        // Claim drone out of the pool so other tasks can't claim it
+        let drone = drones.removeFirst()
+        
+        var possibleExpansions = allClusters.compactMap { cluster -> (MineralCluster, Position.World, Float)? in
             for expansion in currentExpansions {
+                // Is already an expansion
                 if expansion.worldPosition.as2D.distanceXY(to: cluster.1.as2D) <= 15 {
-                    return false
+                    return nil
                 }
             }
             
-            return true
+            var combinedDistance: Float = 0
+            for expansion in currentExpansions {
+                combinedDistance += expansion.worldPosition.as2D.distanceXY(to: cluster.1.as2D)
+            }
+            
+            return (cluster.0, cluster.1, combinedDistance / Float(currentExpansions.count))
         }
         
         possibleExpansions.sort { lhs, rhs in
-            let lhsDistance = lhs.1.as2D.distanceXY(to: drone.worldPosition.as2D)
-            let rhsDistance = rhs.1.as2D.distanceXY(to: drone.worldPosition.as2D)
-            
-            return lhsDistance < rhsDistance
+            return lhs.2 < rhs.2
         }
         
-        if let (_, position) = possibleExpansions.first {
+        if let (_, position, _) = possibleExpansions.first {
             drone.buildHatchery(at: position.as2D)
             self.expanding = position.as2D
             print("expanding to \(position.x) \(position.y)")
         }
         
-        // Choose base furthest from the enemy
+        // Choose base closest to our current expansions
         
         // Return if it's not safe now
         // Return if we have no idle workers
@@ -155,19 +175,61 @@ final class CustomBot: BotPlayer {
         return debugCommands
     }
     
+    func balanceEconomy(gamestate: GamestateHelper) {
+        let expansions = self.getClustersWithExpansion(gamestate: gamestate)
+        var drones = gamestate.units.owned.only(Drone.self)
+        self.expand(usingDrones: &drones, nearExpansions: expansions.map { $0.2 }, gamestate: gamestate)
+        var idleDrones = drones.filter { $0.orders.isEmpty }
+        //        var idleDrones = drones.filter { drone in
+        //            for order in drone.orders {
+        //                if order.ability == .droneHarvest || order.ability == .droneGatherResources || order.ability == .droneReturnResources {
+        //                    return false
+        //                }
+        //            }
+        //
+        //            return true
+        //        }
+        
+        nextExpansion: for (cluster, _, hatchery) in expansions where !idleDrones.isEmpty {
+            if hatchery.harvesterSurplus < 0 {
+                let neededHarvesters = -hatchery.harvesterSurplus
+                
+                for _ in 0..<neededHarvesters where !idleDrones.isEmpty {
+                    guard let mineral = cluster.resources.minerals.randomElement() else {
+                        continue nextExpansion
+                    }
+                    
+                    let assignedDrone = idleDrones.removeFirst()
+                    assignedDrone.harvest(mineral)
+                }
+                // TODO: Prefer nearby idle drones over far away idle drones
+                // But performance? Let's check that, too
+                
+                // Drones needed
+            } else if hatchery.harvesterSurplus > 0 {
+                // Too many harvesters. Add some as idle
+            }
+        }
+    }
+    
     func runTick(gamestate: GamestateHelper) {
+        tick = tick &+ 1
+        
         setupDebug(gamestate: gamestate)
-        var larva = gamestate.units.only(Larva.self)
-        let eggs = gamestate.units.only(Egg.self)
+        
+        if tick % 50 == 0 {
+            balanceEconomy(gamestate: gamestate)
+        }
+        
+        var larva = gamestate.units.owned.only(Larva.self)
+        let eggs = gamestate.units.owned.only(Egg.self)
+        let spawningDrones = eggs.spawning(into: .drone).count
         let spawningOverlords = eggs.spawning(into: .overlord).count
-        let spawningDrones = eggs.spawning(into: .overlord).count
-
-        self.expand(gamestate: gamestate)
         
         larva.makeSupply(spawningOverlords: spawningOverlords, gamestate: gamestate)
         
         if gamestate.economy.usedWorkerSupply < 70 {
-            let surplusDrones = gamestate.units.only(Hatchery.self).reduce(0, { $0 + $1.harvesterSurplus }) - spawningDrones
+            let surplusDrones = gamestate.units.owned.only(Hatchery.self).reduce(0, { $0 + $1.harvesterSurplus }) - spawningDrones
             // TODO: Balance vespene & minerals
             larva.trainDrones(-surplusDrones, gamestate: gamestate)
         }

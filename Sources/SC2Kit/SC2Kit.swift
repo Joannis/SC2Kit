@@ -384,7 +384,14 @@ public final class SC2Client {
     func sendActions(_ actions: [Action]) -> EventLoopFuture<Void> {
         var request = SC2APIProtocol_Request()
         request.action.actions = actions.map { $0.sc2 }
-        return send(&request, outputKeyPath: \.action).map { _ in }
+        return send(&request, outputKeyPath: \.action).map { results in
+            #if DEBUG || Xcode
+            let errors = results.result.filter { $0 != .success }
+            if !errors.isEmpty {
+                print(errors)
+            }
+            #endif
+        }
     }
 }
 
@@ -457,17 +464,17 @@ public struct ObservedPlayer {
 }
 
 public enum Action {
-    case commandUnits([UnitTag], Ability, Target)
+    case commandUnits([UnitTag], do: Ability, on: Target, queued: Bool)
     
     var sc2: SC2APIProtocol_Action {
         var action = SC2APIProtocol_Action()
         
         switch self {
-        case .commandUnits(let tags, let ability, let target):
+        case .commandUnits(let tags, let ability, let target, let queued):
             action.actionRaw.unitCommand.abilityID = ability.rawValue
-            action.actionRaw.unitCommand.unitTags = tags.map { $0.tag }
+            action.actionRaw.unitCommand.unitTags = [tags[0].tag]
             action.actionRaw.unitCommand.target = target.sc2
-            action.actionRaw.unitCommand.queueCommand = true
+            action.actionRaw.unitCommand.queueCommand = queued
         }
         
         return action
@@ -491,17 +498,25 @@ public enum Target {
     }
 }
 
-public struct UnitTag {
+public struct UnitTag: Equatable, Hashable {
     let tag: UInt64
 }
 
 public enum Ability: Int32 {
+    case stop = 4
+    case move = 16
+    case patrol = 17
+    case holdPosition = 18
+    case attackMove = 13
     case trainDrone = 1342
     case trainZergling = 1343
     case trainOverlord = 1344
-    case droneGather = 1183
     case buildHatchery = 1152
-    case move = 3794
+    case rallyWorkers = 3690
+//    case move = 3794
+    
+    case droneGather = 1183
+    case gather = 3666
     
     var trainedUnit: UnitType? {
         switch self {
