@@ -141,6 +141,10 @@ extension Array {
 public struct Order {
     let sc2: SC2APIProtocol_UnitOrder
     
+    public var target: UnitTag {
+        UnitTag(tag: sc2.targetUnitTag)
+    }
+    
     public var ability: Ability? {
         Ability(rawValue: Int32(sc2.abilityID))
     }

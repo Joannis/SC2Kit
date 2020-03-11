@@ -503,6 +503,7 @@ public struct UnitTag: Equatable, Hashable {
 }
 
 public enum Ability: Int32 {
+    case smart = 1
     case stop = 4
     case move = 16
     case patrol = 17

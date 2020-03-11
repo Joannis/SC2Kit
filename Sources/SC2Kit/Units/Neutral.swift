@@ -14,16 +14,28 @@ extension SC2Unit where E == Minerals {
 
 extension Array where Element == AnyUnit {
     public var minerals: [SC2Unit<Minerals>] {
-        self.filter { $0.type?.isMinerals == true }.compactMap(SC2Unit<Minerals>.init)
+        self.compactMap { anyUnit in
+            if anyUnit.type?.isMinerals == true {
+                return SC2Unit<Minerals>(anyUnit: anyUnit)
+            } else {
+                return nil
+            }
+        }
     }
     
     public var vespeneGeysers: [SC2Unit<VespeneGeyser>] {
-        self.filter { $0.type?.isVespeneGeyser == true }.compactMap(SC2Unit<VespeneGeyser>.init)
+        self.compactMap { anyUnit in
+            if anyUnit.type?.isVespeneGeyser == true {
+                return SC2Unit<VespeneGeyser>(anyUnit: anyUnit)
+            } else {
+                return nil
+            }
+        }
     }
     
     public var resources: [SC2Unit<Resources>] {
         self.filter { $0.type?.isVespeneGeyser == true || $0.type?.isMinerals == true }.compactMap(SC2Unit<Resources>.init)
-    }
+    }   
 }
 
 extension Array where Element == SC2Unit<Resources> {

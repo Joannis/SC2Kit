@@ -57,26 +57,13 @@ extension Array where Element == SC2Unit<Larva> {
 final class CustomBot: BotPlayer {
     func saveReplay(_ data: Data) {}
     var debugCommands = [DebugCommand]()
-    var clusters: [(MineralCluster, Position.World)]?
     var expanding: Position.World2D?
-    var expansionCount = 1
     var tick: UInt = 0
     
     func getClusters(gamestate: GamestateHelper) -> [(MineralCluster, Position.World)] {
-        if let clusters = self.clusters {
-            return clusters
-        }
-        
-        let mineralClusters = gamestate.units.resources.formClusters().compactMap { cluster -> (MineralCluster, Position.World)? in
-//            guard let location = cluster.getExpansionLocation(in: gamestate) else {
-//                return nil
-//            }
-            
+        gamestate.units.resources.formClusters().compactMap { cluster -> (MineralCluster, Position.World)? in
             return (cluster, cluster.approximateExpansionLocation)
         }
-        
-        self.clusters = mineralClusters
-        return mineralClusters
     }
     
     func getClustersWithExpansion(gamestate: GamestateHelper) -> [(MineralCluster, Position.World, SC2Unit<Hatchery>)] {
@@ -117,22 +104,20 @@ final class CustomBot: BotPlayer {
     }
     
     func expand(usingDrones drones: inout [SC2Unit<Drone>], nearExpansions currentExpansions: [SC2Unit<Hatchery>], gamestate: GamestateHelper) {
-        // Detect current expansions and ignore those clusters
-        let allClusters = getClusters(gamestate: gamestate)
-        
-        if currentExpansions.count == expansionCount {
-            expansionCount += 1
-            self.expanding = nil
+        let isExpanding = drones.contains { drone in
+            drone.orders.contains { $0.ability == .buildHatchery }
         }
         
         guard
-            expanding == nil,
+            !isExpanding,
             gamestate.canAfford(Hatchery.self),
             !drones.isEmpty
         else {
             return
         }
         
+        // Detect current expansions and ignore those clusters
+        let allClusters = getClusters(gamestate: gamestate)
         // Claim drone out of the pool so other tasks can't claim it
         let drone = drones.removeFirst()
         
@@ -158,8 +143,6 @@ final class CustomBot: BotPlayer {
         
         if let (_, position, _) = possibleExpansions.first {
             drone.buildHatchery(at: position.as2D)
-            self.expanding = position.as2D
-            print("expanding to \(position.x) \(position.y)")
         }
         
         // Choose base closest to our current expansions
@@ -180,15 +163,19 @@ final class CustomBot: BotPlayer {
         var drones = gamestate.units.owned.only(Drone.self)
         self.expand(usingDrones: &drones, nearExpansions: expansions.map { $0.2 }, gamestate: gamestate)
         var idleDrones = drones.filter { $0.orders.isEmpty }
-        //        var idleDrones = drones.filter { drone in
-        //            for order in drone.orders {
-        //                if order.ability == .droneHarvest || order.ability == .droneGatherResources || order.ability == .droneReturnResources {
-        //                    return false
-        //                }
-        //            }
-        //
-        //            return true
-        //        }
+        
+        nextExpansion: for (_, _, hatchery) in expansions where !idleDrones.isEmpty {
+            // Too many harvesters. Add some as idle
+            var surplus = hatchery.harvesterSurplus
+            
+            nextDrone: for drone in drones where !drone.orders.isEmpty && surplus > 0 {
+                for order in drone.orders where order.target == hatchery.tag {
+                    surplus -= 1
+                    idleDrones.append(drone)
+                    continue nextDrone
+                }
+            }
+        }
         
         nextExpansion: for (cluster, _, hatchery) in expansions where !idleDrones.isEmpty {
             if hatchery.harvesterSurplus < 0 {
@@ -203,13 +190,15 @@ final class CustomBot: BotPlayer {
                     assignedDrone.harvest(mineral)
                 }
                 // TODO: Prefer nearby idle drones over far away idle drones
-                // But performance? Let's check that, too
+                // But CPU performance? Let's check that, too
                 
                 // Drones needed
-            } else if hatchery.harvesterSurplus > 0 {
-                // Too many harvesters. Add some as idle
             }
         }
+        
+//        for drone in idleDrones {
+            // Use these drones!
+//        }
     }
     
     func runTick(gamestate: GamestateHelper) {
@@ -233,6 +222,9 @@ final class CustomBot: BotPlayer {
             // TODO: Balance vespene & minerals
             larva.trainDrones(-surplusDrones, gamestate: gamestate)
         }
+        
+        // TODO: Vespene
+        // TODO: ARMY!
     }
 }
 

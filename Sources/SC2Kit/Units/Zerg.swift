@@ -20,7 +20,7 @@ public enum Drone: ZergLarvaUnit {
 
 extension SC2Unit where E == Drone {
     public func harvest(_ unit: SC2Unit<Minerals>) {
-        helper.actions.append(.commandUnits([self.tag], do: .droneGather, on: .position(unit.worldPosition.as2D), queued: false))
+        helper.actions.append(.commandUnits([self.tag], do: .gather, on: .unit(unit.tag), queued: false))
     }
     
     public func buildHatchery(at position: Position.World2D) {
