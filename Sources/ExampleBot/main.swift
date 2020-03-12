@@ -1,85 +1,12 @@
 import Foundation
 import SC2Kit
 
-extension Array where Element == SC2Unit<Larva> {
-    mutating func makeSupply(spawningOverlords: Int, gamestate: GamestateHelper) {
-        let freeSupply = gamestate.economy.freeSupply + (spawningOverlords * 8)
-        if freeSupply <= 2 {
-            var neededSupply = gamestate.economy.supplyCap / 50
-            
-            if gamestate.economy.supplyCap % 50 > 0 {
-                neededSupply += 1
-            }
-            
-            var copy = self
-            var i = self.count - 1
-            trainLarva: while i > 0 {
-                let larva = self[i]
-                if neededSupply == 0 {
-                    break trainLarva
-                }
-                
-                if !larva.trainOverlord() {
-                    break trainLarva
-                }
-
-                copy.remove(at: i)
-                i -= 1
-                neededSupply -= 1
-            }
-            self = copy
-        }
-    }
-    
-    mutating func trainDrones(_ drones: Int, gamestate: GamestateHelper) {
-        var drones = drones
-
-        var copy = self
-        var i = self.count - 1
-        trainLarva: while i > 0 {
-            let larva = self[i]
-            if drones == 0 {
-                break trainLarva
-            }
-            
-            if !larva.trainDrone() {
-                break trainLarva
-            }
-            
-            copy.remove(at: i)
-            i -= 1
-            drones -= 1
-        }
-        self = copy
-    }
-}
-
 final class CustomBot: BotPlayer {
     func saveReplay(_ data: Data) {}
     var debugCommands = [DebugCommand]()
     var expanding: Position.World2D?
-    var tick: UInt = 0
-    
-    func getClusters(gamestate: GamestateHelper) -> [(MineralCluster, Position.World)] {
-        gamestate.units.resources.formClusters().compactMap { cluster -> (MineralCluster, Position.World)? in
-            return (cluster, cluster.approximateExpansionLocation)
-        }
-    }
-    
-    func getClustersWithExpansion(gamestate: GamestateHelper) -> [(MineralCluster, Position.World, SC2Unit<Hatchery>)] {
-        let hatcheries = gamestate.units.owned.only(Hatchery.self)
-        return getClusters(gamestate: gamestate).compactMap { cluster, position in
-            for hatchery in hatcheries {
-                let isNearCluster = hatchery.worldPosition.as2D.distanceXY(to: position.as2D) <= 15
-                
-                if isNearCluster {
-                    return (cluster, position, hatchery)
-                }
-            }
-            
-            return nil
-        }
-    }
+    var assignedConstraints = [FocusArea: StrategyConstraints]()
+    var strategyActors = [FocusArea: StrategyActor]()
     
     init() {}
     
@@ -88,70 +15,19 @@ final class CustomBot: BotPlayer {
             return
         }
         
-        #if DEBUG
-        nextCluster: for (cluster, expansionPosition) in getClusters(gamestate: gamestate) {
-            debugCommands.append(.draw([
-                .sphere(.init(at: cluster.approximateExpansionLocation, range: 3, color: .red)),
-                .sphere(.init(at: expansionPosition, range: 5, color: .red)),
-            ]))
-            
-            debugCommands.append(.draw(cluster.resources.map { resource in
-                let distance = resource.worldPosition.as2D.distanceXY(to: expansionPosition.as2D)
-                return .text(DebugString(text: "\(distance)", color: .white, position: .world(resource.worldPosition)))
-            }))
-        }
-        #endif
-    }
-    
-    func expand(usingDrones drones: inout [SC2Unit<Drone>], nearExpansions currentExpansions: [SC2Unit<Hatchery>], gamestate: GamestateHelper) {
-        let isExpanding = drones.contains { drone in
-            drone.orders.contains { $0.ability == .buildHatchery }
-        }
-        
-        guard
-            !isExpanding,
-            gamestate.canAfford(Hatchery.self),
-            !drones.isEmpty
-        else {
-            return
-        }
-        
-        // Detect current expansions and ignore those clusters
-        let allClusters = getClusters(gamestate: gamestate)
-        // Claim drone out of the pool so other tasks can't claim it
-        let drone = drones.removeFirst()
-        
-        var possibleExpansions = allClusters.compactMap { cluster -> (MineralCluster, Position.World, Float)? in
-            for expansion in currentExpansions {
-                // Is already an expansion
-                if expansion.worldPosition.as2D.distanceXY(to: cluster.1.as2D) <= 15 {
-                    return nil
-                }
-            }
-            
-            var combinedDistance: Float = 0
-            for expansion in currentExpansions {
-                combinedDistance += expansion.worldPosition.as2D.distanceXY(to: cluster.1.as2D)
-            }
-            
-            return (cluster.0, cluster.1, combinedDistance / Float(currentExpansions.count))
-        }
-        
-        possibleExpansions.sort { lhs, rhs in
-            return lhs.2 < rhs.2
-        }
-        
-        if let (_, position, _) = possibleExpansions.first {
-            drone.buildHatchery(at: position.as2D)
-        }
-        
-        // Choose base closest to our current expansions
-        
-        // Return if it's not safe now
-        // Return if we have no idle workers
-        
-        // Expand if we have Idle workers
-        // Expand if we're floating too many minerals
+//        #if DEBUG
+//        nextCluster: for (cluster, expansionPosition) in getClusters(gamestate: gamestate) {
+//            debugCommands.append(.draw([
+//                .sphere(.init(at: cluster.approximateExpansionLocation, range: 3, color: .red)),
+//                .sphere(.init(at: expansionPosition, range: 5, color: .red)),
+//            ]))
+//
+//            debugCommands.append(.draw(cluster.resources.map { resource in
+//                let distance = resource.worldPosition.as2D.distanceXY(to: expansionPosition.as2D)
+//                return .text(DebugString(text: "\(distance)", color: .white, position: .world(resource.worldPosition)))
+//            }))
+//        }
+//        #endif
     }
     
     func debug() -> [DebugCommand] {
@@ -159,9 +35,8 @@ final class CustomBot: BotPlayer {
     }
     
     func balanceEconomy(gamestate: GamestateHelper) {
-        let expansions = self.getClustersWithExpansion(gamestate: gamestate)
-        var drones = gamestate.units.owned.only(Drone.self)
-        self.expand(usingDrones: &drones, nearExpansions: expansions.map { $0.2 }, gamestate: gamestate)
+        let expansions = gamestate.getClustersWithExpansion()
+        let drones = gamestate.units.owned.only(Drone.self)
         var idleDrones = drones.filter { $0.orders.isEmpty }
         
         nextExpansion: for (_, _, hatchery) in expansions where !idleDrones.isEmpty {
@@ -177,54 +52,254 @@ final class CustomBot: BotPlayer {
             }
         }
         
-        nextExpansion: for (cluster, _, hatchery) in expansions where !idleDrones.isEmpty {
-            if hatchery.harvesterSurplus < 0 {
-                let neededHarvesters = -hatchery.harvesterSurplus
-                
-                for _ in 0..<neededHarvesters where !idleDrones.isEmpty {
-                    guard let mineral = cluster.resources.minerals.randomElement() else {
-                        continue nextExpansion
-                    }
-                    
-                    let assignedDrone = idleDrones.removeFirst()
-                    assignedDrone.harvest(mineral)
-                }
-                // TODO: Prefer nearby idle drones over far away idle drones
-                // But CPU performance? Let's check that, too
-                
-                // Drones needed
+        var underCapacityExpansions = expansions.compactMap { cluster, position, hatchery -> (MineralCluster, Position.World, SC2Unit<Hatchery>, Int)? in
+            if hatchery.harvesterSurplus >= 0 {
+                return nil
             }
+            
+            return (cluster, position, hatchery, -hatchery.harvesterSurplus)
         }
         
-//        for drone in idleDrones {
-            // Use these drones!
-//        }
+        for _ in 0..<idleDrones.count {
+            let assignedDrone = idleDrones.removeLast()
+            let nearestIndex = underCapacityExpansions.nearestIndex(
+                to: assignedDrone.worldPosition.as2D,
+                keyPath: \.1.as2D
+            )
+            
+            guard let index = nearestIndex else {
+                // No more expansions means no need to schedule drones
+                return
+            }
+
+            guard let minerals = underCapacityExpansions[index].0.resources.minerals.randomElement() else {
+                assertionFailure("Empty expansion shouldn't be grouped as an expansion")
+                return
+            }
+            
+            assignedDrone.harvest(minerals)
+            underCapacityExpansions[index].3 -= 1
+            
+            // Expansion is now satisfied
+            if underCapacityExpansions[index].3 == 0 {
+                underCapacityExpansions.remove(at: index)
+            }
+        }
+    }
+    
+    func analyzeFocusAreas() -> [StrategyRecommendation] {
+        return [
+            StrategyRecommendation(area: .expandEconomy, weight: 1),
+            StrategyRecommendation(area: .expandSupply, weight: 1)
+        ]
     }
     
     func runTick(gamestate: GamestateHelper) {
-        tick = tick &+ 1
-        
         setupDebug(gamestate: gamestate)
         
-        if tick % 50 == 0 {
-            balanceEconomy(gamestate: gamestate)
+        // This runs first, so that its commands are sent before being overridden by the strategies
+        balanceEconomy(gamestate: gamestate)
+        
+        let recommendations = analyzeFocusAreas()
+        var claimedMinerals = 0
+        var claimedVespene = 0
+        
+        for constraint in assignedConstraints.values {
+            claimedMinerals += constraint.budget.minerals
+            claimedVespene += constraint.budget.vespene
         }
         
-        var larva = gamestate.units.owned.only(Larva.self)
-        let eggs = gamestate.units.owned.only(Egg.self)
-        let spawningDrones = eggs.spawning(into: .drone).count
-        let spawningOverlords = eggs.spawning(into: .overlord).count
+        let unclaimedMinerals = gamestate.economy.minerals - claimedMinerals
+        let unclaimedVespene = gamestate.economy.vespene - claimedVespene
         
-        larva.makeSupply(spawningOverlords: spawningOverlords, gamestate: gamestate)
+        assert(unclaimedMinerals >= 0)
+        assert(unclaimedVespene >= 0)
         
-        if gamestate.economy.usedWorkerSupply < 70 {
-            let surplusDrones = gamestate.units.owned.only(Hatchery.self).reduce(0, { $0 + $1.harvesterSurplus }) - spawningDrones
-            // TODO: Balance vespene & minerals
-            larva.trainDrones(-surplusDrones, gamestate: gamestate)
+        var reclaimedMinerals = 0
+        var reclaimedVespene = 0
+        
+        var units = gamestate.units
+        var claimedUnits = [FocusArea: [AnyUnit]]()
+        
+        let actors = recommendations.map { recommendation -> (FocusArea, StrategyActor) in
+            if let actor = strategyActors[recommendation.area] {
+                return (recommendation.area, actor)
+            } else {
+                let actor = recommendation.area.makeActor()
+                strategyActors[recommendation.area] = actor
+                return (recommendation.area, actor)
+            }
         }
         
-        // TODO: Vespene
-        // TODO: ARMY!
+        for (area, actor) in actors where actor.claimOrder == .first {
+            claimedUnits[area] = actor.claimUnits(from: &units, gamestate: gamestate)
+        }
+        
+        for (area, actor) in actors where actor.claimOrder == .normal {
+            claimedUnits[area] = actor.claimUnits(from: &units, gamestate: gamestate)
+        }
+        
+        for (area, actor) in actors where actor.claimOrder == .last {
+            claimedUnits[area] = actor.claimUnits(from: &units, gamestate: gamestate)
+        }
+        
+        var results = [FocusArea: StrategyContinuationRecommendation]()
+        
+        for (focusArea, actor) in strategyActors {
+            let isFocusArea = recommendations.contains(where: { $0.area == focusArea })
+            
+            if !isFocusArea {
+                if let constraint = assignedConstraints[focusArea] {
+                    reclaimedMinerals += constraint.budget.minerals
+                    reclaimedVespene += constraint.budget.vespene
+                }
+
+                assignedConstraints[focusArea] = nil
+                strategyActors[focusArea] = nil
+            } else if let constraint = assignedConstraints[focusArea] {
+                var constraint = constraint
+                constraint.units = claimedUnits[focusArea] ?? []
+                results[focusArea] = actor.enactStrategy(contrainedBy: &constraint, gamestate: gamestate)
+                assignedConstraints[focusArea] = constraint
+            } else {
+                var constraint = StrategyConstraints(units: claimedUnits[focusArea] ?? [], budget: .none)
+                results[focusArea] = actor.enactStrategy(contrainedBy: &constraint, gamestate: gamestate)
+                assignedConstraints[focusArea] = constraint
+            }
+        }
+        
+        for (focusArea, result) in results where result.type == .stop {
+            if let constraint = assignedConstraints[focusArea] {
+                reclaimedMinerals += constraint.budget.minerals
+                reclaimedVespene += constraint.budget.vespene
+            }
+            assignedConstraints[focusArea] = nil
+            strategyActors[focusArea] = nil
+        }
+        
+        var assignableMinerals = reclaimedMinerals + unclaimedMinerals
+        var assignableVespene = reclaimedVespene + unclaimedVespene
+        
+        var claimableMinerals = 0
+        var claimableVespene = 0
+        
+        for (focusArea, result) in results where result.type == .deprioritize {
+            if let constraint = assignedConstraints[focusArea] {
+                claimableMinerals += constraint.budget.minerals
+                claimableVespene += constraint.budget.vespene
+            }
+        }
+        
+        func maxAssignableMinerals() -> Int { assignableMinerals + claimableMinerals }
+        func maxAssignableVespene() -> Int { assignableVespene + claimableVespene }
+        
+        /// Claims vespene from unused resources
+        /// Reclaims from open budgets to shift priorities if needed
+        func claimMinerals(_ claim: Int) -> Int {
+            if assignableMinerals > claim {
+                assignableMinerals -= claim
+                return claim
+            } else {
+                var unclaimed = claim - assignableMinerals
+                assignableMinerals = 0
+                
+                for (focusArea, result) in results where result.type == .deprioritize && unclaimed > 0 {
+                    if var constraint = assignedConstraints[focusArea] {
+                        if constraint.budget.minerals >= unclaimed {
+                            constraint.budget.minerals -= unclaimed
+                            unclaimed = 0
+                            return claim
+                        } else {
+                            unclaimed -= constraint.budget.minerals
+                            constraint.budget.minerals = 0
+                        }
+                        
+                        assignedConstraints[focusArea] = constraint
+                    }
+                }
+                
+                return claim - unclaimed
+            }
+        }
+        
+        /// Claims vespene from unused resources
+        /// Reclaims from open budgets to shift priorities if needed
+        func claimVespene(_ claim: Int) -> Int {
+            if assignableVespene >= claim {
+                assignableVespene -= claim
+                return claim
+            } else {
+                var unclaimed = claim - assignableMinerals
+                assignableMinerals = 0
+                
+                for (focusArea, result) in results where result.type == .deprioritize && unclaimed > 0 {
+                    if var constraint = assignedConstraints[focusArea] {
+                        if constraint.budget.vespene >= unclaimed {
+                            constraint.budget.vespene -= unclaimed
+                            unclaimed = 0
+                            return claim
+                        } else {
+                            unclaimed -= constraint.budget.vespene
+                            constraint.budget.vespene = 0
+                        }
+                        
+                        assignedConstraints[focusArea] = constraint
+                    }
+                }
+                
+                return claim - unclaimed
+            }
+        }
+        
+        let priorityRequests = results.filter { $0.value.type == .prioritize }.compactMap { area, value -> (FocusArea, StrategyContinuationRecommendation, Float)? in
+            guard let priority = recommendations.first(where: { $0.area == area })?.weight else {
+                return nil
+            }
+            
+            return (area, value, priority)
+        }.sorted { lhs, rhs in
+            lhs.2 > rhs.2
+        }
+        
+        nextFocusArea: for (focusArea, recommendation, priority) in priorityRequests {
+            guard maxAssignableMinerals() > 0 || maxAssignableVespene() > 0 else {
+                return
+            }
+            
+            guard var constraints = assignedConstraints[focusArea] else {
+                assertionFailure()
+                continue nextFocusArea
+            }
+            
+            if let minimumRequestedBudget = recommendation.minimumRequestedBudget {
+                // No maximum, so we try to give the exact amount
+                constraints.budget.minerals += claimMinerals(minimumRequestedBudget.minerals)
+                constraints.budget.vespene += claimVespene(minimumRequestedBudget.vespene)
+            } else {
+                // In order to allow a critical strategy to consume all strategy, such as for defense
+                // This allows escalating the priority by to maximum 150%
+                // This way an urgent request can prevent being blocked by lower priority tasks
+                let escalatedPriority = priority * 1.5
+                let maxMineralBudget = min(maxAssignableMinerals(), Int(Float(maxAssignableMinerals()) * escalatedPriority))
+                let maxVespeneBudget = min(maxAssignableVespene(), Int(Float(maxAssignableVespene()) * escalatedPriority))
+                
+                // Give percentage based on priority remainder stake
+                var allocatedMinerals = maxMineralBudget
+                var allocatedVespene = maxVespeneBudget
+                
+                if let maximumRequestedBudget = recommendation.maximumRequestedBudget {
+                    // Give percentage based on priority remainder stake UP TO this budget
+                    allocatedMinerals = min(allocatedMinerals, maximumRequestedBudget.minerals)
+                    allocatedVespene = min(allocatedVespene, maximumRequestedBudget.vespene)
+                }
+                
+                // Allocate all acknowledged budget
+                constraints.budget.minerals += claimMinerals(allocatedMinerals)
+                constraints.budget.vespene += claimVespene(allocatedVespene)
+            }
+            
+            assignedConstraints[focusArea] = constraints
+        }
     }
 }
 
@@ -246,5 +321,3 @@ do {
     try game.quit().wait()
     throw error
 }
-// TODO: Create game
-// TODO: Join game

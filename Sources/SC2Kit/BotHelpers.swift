@@ -117,8 +117,8 @@ public final class GamestateHelper {
 }
 
 public struct Cost {
-    public let minerals: Int
-    public let vespene: Int
+    public var minerals: Int
+    public var vespene: Int
     
     public static func minerals(_ minerals: Int) -> Cost {
         Cost(minerals: minerals, vespene: 0)
@@ -130,6 +130,31 @@ public struct Cost {
         Cost(minerals: 0, vespene: vespene)
     }
     
+    public func canAfford(_ cost: Cost) -> Bool {
+        cost.minerals <= minerals && cost.vespene <= vespene
+    }
+    
+    public func canAfford<E: Entity>(_ entity: E.Type) -> Bool {
+        canAfford(E.cost)
+    }
+    
+    @discardableResult
+    public mutating func afford(_ cost: Cost, run: () -> ()) -> Bool {
+        if canAfford(cost) {
+            minerals -= cost.minerals
+            vespene -= cost.vespene
+            run()
+            return true
+        }
+        
+        return false
+    }
+    
+    @discardableResult
+    public mutating func afford<E: Entity>(_ entity: E.Type, run: () -> ()) -> Bool {
+        afford(E.cost, run: run)
+    }
+    
     public init(
         minerals: Int,
         vespene: Int
@@ -137,6 +162,22 @@ public struct Cost {
         self.minerals = minerals
         self.vespene = vespene
     }
+}
+
+public func -(lhs: Cost, rhs: Cost) -> Cost {
+    Cost(minerals: lhs.minerals - rhs.minerals, vespene: lhs.vespene - rhs.vespene)
+}
+
+public func -=(lhs: inout Cost, rhs: Cost) {
+    lhs = lhs - rhs
+}
+
+public func +(lhs: Cost, rhs: Cost) -> Cost {
+    Cost(minerals: lhs.minerals + rhs.minerals, vespene: lhs.vespene + rhs.vespene)
+}
+
+public func +=(lhs: inout Cost, rhs: Cost) {
+    lhs = lhs + rhs
 }
 
 public struct Position {

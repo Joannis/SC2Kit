@@ -117,24 +117,35 @@ public struct SC2Unit<E: AnyEntity> {
 
 extension Array {
     public func nearestUnit<E: AnyEntity>(to position: Position.World2D) -> Element? where Element == SC2Unit<E> {
+        nearest(to: position, keyPath: \.worldPosition.as2D)
+    }
+    
+    public func nearestIndex(to position: Position.World2D, keyPath: KeyPath<Element, Position.World2D>) -> Int? {
         if isEmpty {
             return nil
         }
         
-        var unit = self[0]
-        var distance = unit.worldPosition.as2D.distanceXY(to: position)
+        var index = 0
+        var distance = self[index][keyPath: keyPath].distanceXY(to: position)
         
         for i in 1..<self.count {
-            let otherUnit = self[i]
-            let otherDistance = unit.worldPosition.as2D.distanceXY(to: position)
+            let otherDistance = self[i][keyPath: keyPath].distanceXY(to: position)
             
             if otherDistance < distance {
-                unit = otherUnit
+                index = i
                 distance = otherDistance
             }
         }
         
-        return unit
+        return index
+    }
+    
+    public func nearest(to position: Position.World2D, keyPath: KeyPath<Element, Position.World2D>) -> Element? {
+        guard let index = nearestIndex(to: position, keyPath: keyPath) else {
+            return nil
+        }
+        
+        return self[index]
     }
 }
 

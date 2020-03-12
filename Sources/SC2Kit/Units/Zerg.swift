@@ -23,8 +23,8 @@ extension SC2Unit where E == Drone {
         helper.actions.append(.commandUnits([self.tag], do: .gather, on: .unit(unit.tag), queued: false))
     }
     
-    public func buildHatchery(at position: Position.World2D) {
-        _ = helper.train(Hatchery.self) {
+    public func buildHatchery(at position: Position.World2D, subbtracting budget: inout Cost) {
+        budget.afford(E.self) {
             let placement = PlaceBuilding(
                 unit: self.tag,
                 ability: .buildHatchery,
@@ -53,16 +53,18 @@ public enum Larva: Entity {
 }
 
 extension SC2Unit where E == Larva {
-    public func trainDrone() -> Bool {
-        spawn(into: Drone.self)
+    @discardableResult
+    public func trainDrone(substracting budget: inout Cost) -> Bool {
+        spawn(into: Drone.self, substracting: &budget)
     }
     
-    public func trainOverlord() -> Bool {
-        spawn(into: Overlord.self)
+    @discardableResult
+    public func trainOverlord(substracting budget: inout Cost) -> Bool {
+        spawn(into: Overlord.self, substracting: &budget)
     }
     
-    private func spawn<Z: ZergLarvaUnit>(into entity: Z.Type) -> Bool {
-        return helper.train(Z.self) {
+    private func spawn<Z: ZergLarvaUnit>(into entity: Z.Type, substracting budget: inout Cost) -> Bool {
+        budget.afford(Z.self) {
             helper.actions.append(.commandUnits([self.tag], do: Z.trainAbility, on: .none, queued: false))
         }
     }
