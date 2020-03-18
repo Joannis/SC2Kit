@@ -226,18 +226,21 @@ public func +(lhs: Cost, rhs: Cost) -> Cost {
 }
 
 public func /(lhs: Cost, rhs: Cost) -> Int {
-    let remainderMinerals = lhs.minerals % rhs.minerals
-    let remainderVespene = lhs.vespene % rhs.vespene
+    func remainderMinerals() -> Int { lhs.minerals % rhs.minerals }
+    func remainderVespene() -> Int { lhs.vespene % rhs.vespene }
     
-    if rhs.minerals == 0 {
-        return (lhs.vespene - remainderVespene) / rhs.vespene
-    } else if rhs.vespene == 0 {
-        return (lhs.minerals - remainderMinerals) / rhs.minerals
-    } else {
-        let minerals = (lhs.minerals - remainderMinerals) / rhs.minerals
-        let vespene = (lhs.vespene - remainderVespene) / rhs.vespene
+    if rhs.minerals == 0 && rhs.vespene != 0 {
+        return (lhs.vespene - remainderVespene()) / rhs.vespene
+    } else if rhs.vespene == 0 && lhs.minerals != 0 {
+        return (lhs.minerals - remainderMinerals()) / rhs.minerals
+    } else if rhs.minerals != 0 && rhs.vespene != 0 {
+        let minerals = (lhs.minerals - remainderMinerals()) / rhs.minerals
+        let vespene = (lhs.vespene - remainderVespene()) / rhs.vespene
         
         return min(minerals, vespene)
+    } else {
+        assertionFailure("No resources being spent")
+        return .max
     }
 }
 
