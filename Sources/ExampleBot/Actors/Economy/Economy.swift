@@ -3,6 +3,7 @@ import SC2Kit
 final class EconomyCompoundStrategyActor: StrategyActor {
     /// This strategy wants to claim all REMAINING drones for economy
     let claimOrder: UnitClaimOrder = .last
+    private(set) var permanentClaims = [UnitTag]()
     
     let expand = ExpansionStrategyActor()
     let worker = WorkerStrategyActor()
@@ -12,10 +13,10 @@ final class EconomyCompoundStrategyActor: StrategyActor {
     
     init() {}
     
-    func claimUnits(from selection: inout [AnyUnit], gamestate: GamestateHelper) -> [AnyUnit] {
+    func claimUnits(from selection: inout [AnyUnit], contrainedBy budget: Cost, gamestate: GamestateHelper) -> [AnyUnit] {
         // Expand claims a drone first
-        expandUnits = expand.claimUnits(from: &selection, gamestate: gamestate)
-        workerUnits = worker.claimUnits(from: &selection, gamestate: gamestate)
+        expandUnits = expand.claimUnits(from: &selection, contrainedBy: budget, gamestate: gamestate)
+        workerUnits = worker.claimUnits(from: &selection, contrainedBy: budget, gamestate: gamestate)
         
         return expandUnits + workerUnits
     }

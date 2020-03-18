@@ -139,6 +139,7 @@ public final class SC2Bot {
             self.gamestate.observation = observation
             self.gamestate.actions.removeAll(keepingCapacity: true)
             self.gamestate.placedBuildings.removeAll(keepingCapacity: true)
+            self.gamestate.clearCache()
             
             for building in placedBuildings {
                 building.onSuccess(self.gamestate)
@@ -419,12 +420,23 @@ public struct Observation {
     }
     
     public var player: ObservedPlayer {
-        ObservedPlayer(player: observation.playerCommon)
+        ObservedPlayer(observation: observation)
     }
+    
+    public var creepGrid: Grid {
+        Grid(sc2: observation.rawData.mapState.creep)
+    }
+    
+    public var visibility: Grid {
+        Grid(sc2: observation.rawData.mapState.visibility)
+    }
+    
+    // TODO: Power fields & Radar areas are useful for protoss & terran
 }
 
 public struct ObservedPlayer {
-    let player: SC2APIProtocol_PlayerCommon
+    let observation: SC2APIProtocol_Observation
+    var player: SC2APIProtocol_PlayerCommon { observation.playerCommon }
     
     public var minerals: Int {
         Int(player.minerals)
@@ -502,6 +514,18 @@ public struct UnitTag: Equatable, Hashable {
     let tag: UInt64
 }
 
+extension Array where Element == AnyUnit {
+    public func makeTags() -> [UnitTag] {
+        map(\.tag)
+    }
+}
+
+extension Array {
+    public func makeTags<E>() -> [UnitTag] where Element == SC2Unit<E> {
+        map(\.tag)
+    }
+}
+
 public enum Ability: Int32 {
     case smart = 1
     case stop = 4
@@ -513,6 +537,7 @@ public enum Ability: Int32 {
     case trainZergling = 1343
     case trainOverlord = 1344
     case buildHatchery = 1152
+    case buildSpawningPool = 1155
     case rallyWorkers = 3690
 //    case move = 3794
     

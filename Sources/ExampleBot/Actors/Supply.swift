@@ -3,10 +3,11 @@ import SC2Kit
 final class SupplyStrategyActor: StrategyActor {
     /// This strategy wants to claim all REMAINING drones for economy
     let claimOrder: UnitClaimOrder = .first
+    private(set) var permanentClaims = [UnitTag]()
     
     static func neededOverlords(gamestate: GamestateHelper) -> Int {
-        let overlords = gamestate.units.only(Overlord.self).count
-        let spawning = gamestate.units.only(Larva.self).filter { larva in
+        let overlords = gamestate.units.owned(Overlord.self).count
+        let spawning = gamestate.units.owned(Larva.self).filter { larva in
             larva.orders.contains { $0.ability == .trainOverlord }
         }.count
         
@@ -18,16 +19,19 @@ final class SupplyStrategyActor: StrategyActor {
         return (gamestate.economy.usedSupply / 7 + 1)
     }
     
-    func claimUnits(from selection: inout [AnyUnit], gamestate: GamestateHelper) -> [AnyUnit] {
-        return selection.claimType(max: Self.neededOverlords(gamestate: gamestate), .larva)
+    func claimUnits(from selection: inout [AnyUnit], contrainedBy budget: Cost, gamestate: GamestateHelper) -> [AnyUnit] {
+        // Ensure not to claim too many larva if they aren't being used
+        let affordableOverlords = budget / Overlord.cost
+        let maxClaim = min(affordableOverlords, Self.neededOverlords(gamestate: gamestate))
+        return selection.claimType(max: maxClaim, .larva)
     }
     
     init() {}
     
     func enactStrategy(contrainedBy strategyConstraints: inout StrategyConstraints, gamestate: GamestateHelper) -> StrategyContinuationRecommendation {
-        let larva = strategyConstraints.units.only(Larva.self)
+        let larva = strategyConstraints.units.owned(Larva.self)
         for larva in larva {
-            larva.trainOverlord(substracting: &strategyConstraints.budget)
+            larva.trainOverlord(subtracting: &strategyConstraints.budget)
         }
         let neededOverlords = Self.neededOverlords(gamestate: gamestate)
         

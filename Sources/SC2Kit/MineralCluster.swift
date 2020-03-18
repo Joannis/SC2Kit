@@ -93,7 +93,7 @@ public struct MineralCluster {
         return result
     }
     
-    public var approximateExpansionLocation: Position.World {
+    public var expansionLocation: Position.World {
         var centerOfMass = self.centerOfMass
         guard let (lhs, rhs) = furthestResources() else {
             return centerOfMass

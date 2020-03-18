@@ -23,7 +23,7 @@ extension BotPlayer {
     public var saveReplay: Bool { true }
 }
 
-public struct PlacementGrid {
+public struct Grid {
     let sc2: SC2APIProtocol_ImageData
     
     init(sc2: SC2APIProtocol_ImageData) {
@@ -44,8 +44,12 @@ public struct PlacementGrid {
 public struct GameInfo {
     let sc2: SC2APIProtocol_ResponseGameInfo
     
-    public var placementGrid: PlacementGrid {
-        PlacementGrid(sc2: sc2.startRaw.placementGrid)
+    public var startLocations: [Position.World2D] {
+        sc2.startRaw.startLocations.map(Position.World2D.init)
+    }
+    
+    public var placementGrid: Grid {
+        Grid(sc2: sc2.startRaw.placementGrid)
     }
 }
 
@@ -54,11 +58,26 @@ public final class GamestateHelper {
     internal var actions = [Action]()
     internal var placedBuildings = [PlaceBuilding]()
     public let gameInfo: GameInfo
+    private var cache = [String: Any]()
     public private(set) var willQuit = false
     
     init(observation: Observation, gameInfo: GameInfo) {
         self.observation = observation
         self.gameInfo = gameInfo
+    }
+    
+    func clearCache() {
+        cache.removeAll(keepingCapacity: true)
+    }
+    
+    public func cached<T>(byKey key: String, run: () -> T) -> T {
+        if let value = cache[key] {
+            return value as! T
+        }
+        
+        let value = run()
+        cache[key] = value
+        return value
     }
     
     public var economy: ObservedPlayer {
@@ -73,6 +92,36 @@ public final class GamestateHelper {
         observation.observation.rawData.units.map { unit in
             AnyUnit(sc2: unit, helper: self)
         }
+    }
+    
+    public func canPlace<B: Building>(_ building: B.Type, at location: Position.World2D) -> Bool {
+        let creepGrid = observation.creepGrid
+        let placementGrid = gameInfo.placementGrid
+        
+        switch B.creepPlacement {
+        case .requires(let creepRequirement):
+            for x in B.positioning {
+                for y in B.positioning {
+                    if creepGrid[x, y] != creepRequirement {
+                        return false
+                    }
+                    
+                    if !placementGrid[x, y] {
+                        return false
+                    }
+                }
+            }
+        case .optional:
+            for x in B.positioning {
+                for y in B.positioning {
+                    if !placementGrid[x, y] {
+                        return false
+                    }
+                }
+            }
+        }
+        
+        return true
     }
     
     public func canAfford<U: Entity>(_ unit: U.Type) -> Bool {
@@ -176,6 +225,22 @@ public func +(lhs: Cost, rhs: Cost) -> Cost {
     Cost(minerals: lhs.minerals + rhs.minerals, vespene: lhs.vespene + rhs.vespene)
 }
 
+public func /(lhs: Cost, rhs: Cost) -> Int {
+    let remainderMinerals = lhs.minerals % rhs.minerals
+    let remainderVespene = lhs.vespene % rhs.vespene
+    
+    if rhs.minerals == 0 {
+        return (lhs.vespene - remainderVespene) / rhs.vespene
+    } else if rhs.vespene == 0 {
+        return (lhs.minerals - remainderMinerals) / rhs.minerals
+    } else {
+        let minerals = (lhs.minerals - remainderMinerals) / rhs.minerals
+        let vespene = (lhs.vespene - remainderVespene) / rhs.vespene
+        
+        return min(minerals, vespene)
+    }
+}
+
 public func +=(lhs: inout Cost, rhs: Cost) {
     lhs = lhs + rhs
 }
@@ -230,6 +295,7 @@ public struct Position {
             self.sc2 = sc2
         }
         
+        @inlinable
         public func distanceXorY(to coordinate: Self) -> Float {
             max(
                 distance(inSpace: \.x, to: coordinate),
@@ -237,6 +303,7 @@ public struct Position {
             )
         }
         
+        @inlinable
         public func distanceXY(to coordinate: Self) -> Float {
             let differenceX = distance(inSpace: \.x, to: coordinate)
             let differenceY = distance(inSpace: \.y, to: coordinate)
@@ -245,10 +312,12 @@ public struct Position {
             return (squaredX + squaredY).squareRoot()
         }
         
+        @inlinable
         public func distance(inSpace space: KeyPath<Self, Float>, to coordinate: Self) -> Float {
             abs(coordinate[keyPath: space] - self[keyPath: space])
         }
         
+        @inlinable
         public func difference(inSpace space: KeyPath<Self, Float>, to coordinate: Self) -> Float {
             coordinate[keyPath: space] - self[keyPath: space]
         }

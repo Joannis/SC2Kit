@@ -21,6 +21,10 @@ public struct AnyUnit {
     public var isOwned: Bool {
         sc2.alliance == .self_
     }
+    
+    public var tag: UnitTag {
+        UnitTag(tag: sc2.tag)
+    }
 }
 
 extension Array where Element == AnyUnit {
@@ -40,8 +44,56 @@ extension Array where Element == AnyUnit {
         self.filter { $0.isEnemy }
     }
     
-    public func only<U: Entity>(_ unit: U.Type) -> [SC2Unit<U>]  {
-        self.filter { $0.type == U.type }.compactMap(SC2Unit<U>.init)
+    public func first(byTag tag: UnitTag) -> AnyUnit? {
+        first(where: { $0.tag == tag })
+    }
+    
+    public func first<E: AnyEntity>(byTag tag: UnitTag, as entity: E.Type) -> SC2Unit<E>? {
+        guard let unit = first(byTag: tag) else {
+            return nil
+        }
+        
+        return SC2Unit<E>(sc2: unit.sc2, helper: unit.helper)
+    }
+    
+    public func all<U: Entity>(_ unit: U.Type) -> [SC2Unit<U>]  {
+        self.compactMap { anyUnit in
+            if anyUnit.type == U.type {
+                return SC2Unit<U>(anyUnit: anyUnit)
+            }
+            
+            return nil
+        }
+    }
+    
+    public func owned<U: Entity>(_ unit: U.Type) -> [SC2Unit<U>]  {
+        self.compactMap { anyUnit in
+            if anyUnit.type == U.type && anyUnit.isOwned {
+                return SC2Unit<U>(anyUnit: anyUnit)
+            }
+            
+            return nil
+        }
+    }
+    
+    public func neutral<U: Entity>(_ unit: U.Type) -> [SC2Unit<U>]  {
+        self.compactMap { anyUnit in
+            if anyUnit.type == U.type && anyUnit.isNeutral {
+                return SC2Unit<U>(anyUnit: anyUnit)
+            }
+            
+            return nil
+        }
+    }
+    
+    public func friendly<U: Entity>(_ unit: U.Type) -> [SC2Unit<U>]  {
+        self.compactMap { anyUnit in
+            if anyUnit.type == U.type && anyUnit.isFriendly {
+                return SC2Unit<U>(anyUnit: anyUnit)
+            }
+            
+            return nil
+        }
     }
 }
 
@@ -168,7 +220,14 @@ public protocol Entity: AnyEntity {
     static var supply: Int { get }
 }
 
-public protocol Building: Entity {}
+public protocol Building: Entity {
+    static var positioning: ClosedRange<Int> { get }
+    static var creepPlacement: CreepPlacement { get }
+}
+
+public enum CreepPlacement {
+    case requires(Bool), optional
+}
 
 extension SC2Unit where E: Building {
     public var buildProgress: Float {

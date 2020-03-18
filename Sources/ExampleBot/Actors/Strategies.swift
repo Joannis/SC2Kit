@@ -7,10 +7,7 @@ enum UnitClaimOrder {
 
 enum FocusArea: Hashable {
     /// Build defensive units, position defensively
-    case defend
-    
-    /// Expand the army irregardless of threat
-    case expandArmy
+    case defense
     
     /// A final blow or putting emphesis on an opportunity
     case attack
@@ -33,21 +30,43 @@ enum FocusArea: Hashable {
     /// Either to catch up on technology or to gain more leverage
     case improveTechnologies
     
-    func makeActor() -> StrategyActor {
+    func makeActor<AS: ActorSet>(from set: AS.Type) -> StrategyActor {
         switch self {
         case .expandEconomy:
-            return EconomyCompoundStrategyActor()
+            return AS.makeEconomyActor()
         case .expandSupply:
-            return SupplyStrategyActor()
+            return AS.makeSupplyActor()
+        case .scout:
+            return AS.makeScoutActor()
+        case .attack:
+            return AS.makeOffensiveActor()
+        case .defense:
+            return AS.makeDefensiveActor()
         default:
             fatalError()
         }
     }
 }
 
+protocol ActorSet {
+    associatedtype ScoutActor: StrategyActor
+    associatedtype EconomyActor: StrategyActor
+    associatedtype SupplyActor: StrategyActor
+    associatedtype OffensiveActor: StrategyActor
+    associatedtype DefensiveActor: StrategyActor
+    
+    static func makeScoutActor() -> ScoutActor
+    static func makeEconomyActor() -> EconomyActor
+    static func makeSupplyActor() -> SupplyActor
+    static func makeOffensiveActor() -> OffensiveActor
+    static func makeDefensiveActor() -> DefensiveActor
+}
+
 protocol StrategyActor: class {
     var claimOrder: UnitClaimOrder { get }
-    func claimUnits(from selection: inout [AnyUnit], gamestate: GamestateHelper) -> [AnyUnit]
+    var permanentClaims: [UnitTag] { get }
+    
+    func claimUnits(from selection: inout [AnyUnit], contrainedBy budget: Cost, gamestate: GamestateHelper) -> [AnyUnit]
 //    static func makeRecommendation(from selection: inout [AnyUnit], gamestate: GamestateHelper) -> [AnyUnit]
     func enactStrategy(contrainedBy strategyConstraints: inout StrategyConstraints, gamestate: GamestateHelper) -> StrategyContinuationRecommendation
 }

@@ -2,35 +2,40 @@ import SC2Kit
 
 final class ExpansionStrategyActor: StrategyActor {
     /// This strategy wants to claim all REMAINING drones for economy
-    let claimOrder: UnitClaimOrder = .last
+    let claimOrder: UnitClaimOrder = .first
+    private(set) var permanentClaims = [UnitTag]()
     
-    func claimUnits(from selection: inout [AnyUnit], gamestate: GamestateHelper) -> [AnyUnit] {
+    func claimUnits(from selection: inout [AnyUnit], contrainedBy budget: Cost, gamestate: GamestateHelper) -> [AnyUnit] {
+        if !budget.canAfford(Hatchery.self) {
+            return []
+        }
+        
         return selection.claimType(max: 1, .drone)
     }
     
     init() {}
     
     func enactStrategy(contrainedBy strategyConstraints: inout StrategyConstraints, gamestate: GamestateHelper) -> StrategyContinuationRecommendation {
-        func buildHatcheries() {
-            var drones = strategyConstraints.units.only(Drone.self)
-            
-            let isExpanding = drones.contains { drone in
+        func buildHatcheries() -> Bool {
+            let isHeadingToExpansion = gamestate.units.owned(Drone.self).contains { drone in
                 drone.orders.contains { $0.ability == .buildHatchery }
             }
             
+            let isBuildingExpansion = gamestate.units.owned(Hatchery.self).contains { hatchery in
+                hatchery.buildProgress < 1
+            }
+            
             guard
-                !isExpanding,
+                !isHeadingToExpansion, !isBuildingExpansion,
                 strategyConstraints.budget.canAfford(Hatchery.self),
-                !drones.isEmpty
+                let drone = strategyConstraints.units.owned(Drone.self).first
             else {
-                return
+                return false
             }
             
             // Detect current expansions and ignore those clusters
-            let allClusters = gamestate.getClustersWithExpansion()
-            let currentExpansions = allClusters.map { $0.2 }
-            // Claim drone out of the pool so other tasks can't claim it
-            let drone = drones.removeFirst()
+            let allClusters = gamestate.getClusters()
+            let currentExpansions = gamestate.getClustersWithExpansion().map { $0.2 }
             
             var possibleExpansions = allClusters.compactMap { cluster -> (MineralCluster, Position.World, Float)? in
                 for expansion in currentExpansions {
@@ -55,6 +60,8 @@ final class ExpansionStrategyActor: StrategyActor {
             if let (_, position, _) = possibleExpansions.first {
                 drone.buildHatchery(at: position.as2D, subbtracting: &strategyConstraints.budget)
             }
+            
+            return true
         }
         
         // TODO: Choose base closest to our current expansions
@@ -66,11 +73,25 @@ final class ExpansionStrategyActor: StrategyActor {
         // Expand if we have Idle workers
         // Expand if we're floating too many minerals
         
-        buildHatcheries()
-        return StrategyContinuationRecommendation(
-            type: .proceed,
-            minimumRequestedBudget: Hatchery.cost - strategyConstraints.budget,
-            maximumRequestedBudget: nil
-        )
+        if !buildHatcheries() {
+            // We don't need another hatchery now, stop claiming
+            return StrategyContinuationRecommendation(
+                type: .deprioritize,
+                minimumRequestedBudget: nil,
+                maximumRequestedBudget: nil
+            )
+        } else if WorkerStrategyActor.neededDrones(gamestate: gamestate) <= 3 {
+            return StrategyContinuationRecommendation(
+                type: .prioritize,
+                minimumRequestedBudget: Hatchery.cost - strategyConstraints.budget,
+                maximumRequestedBudget: nil
+            )
+        } else {
+            return StrategyContinuationRecommendation(
+                type: .deprioritize,
+                minimumRequestedBudget: nil,
+                maximumRequestedBudget: nil
+            )
+        }
     }
 }

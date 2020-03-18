@@ -18,13 +18,35 @@ public enum Drone: ZergLarvaUnit {
     public static let trainAbility = Ability.trainDrone
 }
 
+public enum Zergling: ZergLarvaUnit {
+    public static let cost: Cost = .minerals(50)
+    public static let supply = 1
+    public static let type: UnitType = .zergling
+    public static let trainAbility = Ability.trainZergling
+}
+
 extension SC2Unit where E == Drone {
     public func harvest(_ unit: SC2Unit<Minerals>) {
         helper.actions.append(.commandUnits([self.tag], do: .gather, on: .unit(unit.tag), queued: false))
     }
     
+    public func buildSpawningPool(at position: Position.World2D, subbtracting budget: inout Cost) {
+        budget.afford(Hatchery.self) {
+            let placement = PlaceBuilding(
+                unit: self.tag,
+                ability: .buildSpawningPool,
+                ignoreResourceRequirements: true,
+                position: position
+            ) { gamestate in
+                gamestate.actions.append(.commandUnits([self.tag], do: .buildSpawningPool, on: .position(position), queued: false))
+            }
+            
+            helper.placedBuildings.append(placement)
+        }
+    }
+    
     public func buildHatchery(at position: Position.World2D, subbtracting budget: inout Cost) {
-        budget.afford(E.self) {
+        budget.afford(Hatchery.self) {
             let placement = PlaceBuilding(
                 unit: self.tag,
                 ability: .buildHatchery,
@@ -54,16 +76,21 @@ public enum Larva: Entity {
 
 extension SC2Unit where E == Larva {
     @discardableResult
-    public func trainDrone(substracting budget: inout Cost) -> Bool {
-        spawn(into: Drone.self, substracting: &budget)
+    public func trainZergling(subtracting budget: inout Cost) -> Bool {
+        spawn(into: Zergling.self, subtracting: &budget)
     }
     
     @discardableResult
-    public func trainOverlord(substracting budget: inout Cost) -> Bool {
-        spawn(into: Overlord.self, substracting: &budget)
+    public func trainDrone(subtracting budget: inout Cost) -> Bool {
+        spawn(into: Drone.self, subtracting: &budget)
     }
     
-    private func spawn<Z: ZergLarvaUnit>(into entity: Z.Type, substracting budget: inout Cost) -> Bool {
+    @discardableResult
+    public func trainOverlord(subtracting budget: inout Cost) -> Bool {
+        spawn(into: Overlord.self, subtracting: &budget)
+    }
+    
+    private func spawn<Z: ZergLarvaUnit>(into entity: Z.Type, subtracting budget: inout Cost) -> Bool {
         budget.afford(Z.self) {
             helper.actions.append(.commandUnits([self.tag], do: Z.trainAbility, on: .none, queued: false))
         }
@@ -98,9 +125,20 @@ extension Array where Element == SC2Unit<Egg> {
 
 public enum Hatchery: ZergDroneBuilding {
     public static let cost: Cost = .minerals(300)
+    public static let creepPlacement = CreepPlacement.optional
+    public static let positioning: ClosedRange<Int> = -2...2
     public static let supply = 0
     public static let type: UnitType = .hatchery
     public static let buildAbility = Ability.buildHatchery
+}
+
+public enum SpawningPool: ZergDroneBuilding {
+    public static let cost: Cost = .minerals(200)
+    public static let creepPlacement = CreepPlacement.requires(true)
+    public static let positioning: ClosedRange<Int> = -1...1
+    public static let supply = 0
+    public static let type: UnitType = .spawningPool
+    public static let buildAbility = Ability.buildSpawningPool
 }
 
 extension SC2Unit where E == Hatchery {
